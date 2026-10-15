@@ -10,9 +10,9 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-JOLPICA_BASE_URL = "https://api.jolpi.ca/ergast/f1"
+from f1brief import jolpica
+
 WARSAW = ZoneInfo("Europe/Warsaw")
-SOURCE_NAME = "Jolpica-F1"
 
 
 class SessionKind(StrEnum):
@@ -80,7 +80,7 @@ class Race:
         return any(s.kind is SessionKind.SPRINT for s in self.sessions)
 
 
-class ScheduleError(Exception):
+class ScheduleError(jolpica.JolpicaError):
     """The calendar could not be fetched or understood."""
 
 
@@ -161,20 +161,11 @@ def parse_schedule(payload: Mapping[str, Any]) -> list[Race]:
 
 def fetch_schedule(season: int | str = "current", client: httpx.Client | None = None) -> list[Race]:
     """Fetches one season's calendar. Read-only GET; no API key needed."""
-    url = f"{JOLPICA_BASE_URL}/{season}.json"
-    owns_client = client is None
-    client = client or httpx.Client(timeout=15.0)
     try:
-        response = client.get(url, params={"limit": 100})
-        response.raise_for_status()
-        return parse_schedule(response.json())
-    except httpx.HTTPError as exc:
-        raise ScheduleError(f"failed to fetch {url}: {exc}") from exc
-    except ValueError as exc:
-        raise ScheduleError(f"invalid JSON from {url}") from exc
-    finally:
-        if owns_client:
-            client.close()
+        payload = jolpica.get_json(str(season), client)
+    except jolpica.JolpicaError as exc:
+        raise ScheduleError(str(exc)) from exc
+    return parse_schedule(payload)
 
 
 def next_race(races: list[Race], now: datetime) -> Race | None:
@@ -205,5 +196,5 @@ def format_schedule(race: Race, tz: tzinfo = WARSAW) -> str:
         local = session.start_in(tz)
         when = local.strftime("%a %d %b %H:%M") if local else f"{session.date:%a %d %b} TBC"
         lines.append(f"  {session.kind.value:<17} {when}")
-    lines.append(f"Times: {tz}. Source: {SOURCE_NAME}.")
+    lines.append(f"Times: {tz}. Source: {jolpica.SOURCE_NAME}.")
     return "\n".join(lines)
