@@ -53,3 +53,37 @@ def test_next_reports_fetch_failure(
 
     assert main(["next"]) == 1
     assert capsys.readouterr().err == "error: network down\n"
+
+
+def test_standings_prints_report(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    driver_standings_r16: dict,
+    constructor_standings_r16: dict,
+    driver_standings_r17: dict,
+    constructor_standings_r17: dict,
+) -> None:
+    from f1brief import standings
+
+    rep = standings.report(
+        standings.combine(driver_standings_r17, constructor_standings_r17),
+        standings.combine(driver_standings_r16, constructor_standings_r16),
+    )
+    monkeypatch.setattr(standings, "fetch_report", lambda season: rep)
+
+    assert main(["standings"]) == 0
+    assert capsys.readouterr().out.startswith("Standings after round 17 (2026)")
+
+
+def test_standings_reports_fetch_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from f1brief import standings
+
+    def boom(season: str) -> None:
+        raise standings.StandingsError("network down")
+
+    monkeypatch.setattr(standings, "fetch_report", boom)
+
+    assert main(["standings"]) == 1
+    assert capsys.readouterr().err == "error: network down\n"
