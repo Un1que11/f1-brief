@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from f1brief import __version__, drivers, form, schedule, standings
+from f1brief import __version__, drivers, form, pace, schedule, standings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--last", type=int, default=form.DEFAULT_ROUNDS, help="number of races (default: 5)"
     )
     drivers_cmd.add_argument("--season", default="current", help="season year (default: current)")
+
+    commands.add_parser(
+        "pace", help="show long-run race pace of the favourites vs the leaders (last race)"
+    )
     return parser
 
 
@@ -106,6 +110,16 @@ def _cmd_drivers(driver_ids: list[str] | None, last: int, season: str) -> int:
     return 0
 
 
+def _cmd_pace() -> int:
+    try:
+        report = pace.fetch_report(_now())
+    except pace.PaceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(pace.format_report(report))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -116,4 +130,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_form(args.team, args.last, args.season)
     if args.command == "drivers":
         return _cmd_drivers(args.driver_ids, args.last, args.season)
+    if args.command == "pace":
+        return _cmd_pace()
     return 0
