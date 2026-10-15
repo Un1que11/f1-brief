@@ -214,7 +214,7 @@ def _format_movement(change: StandingChange) -> str:
     return "="
 
 
-def _format_points(points: Decimal) -> str:
+def format_points(points: Decimal) -> str:
     # 25 -> "25", 0.5 -> "0.5"; never scientific notation.
     return format(points.normalize(), "f")
 
@@ -226,7 +226,7 @@ def format_report(rep: StandingsReport) -> str:
         s = change.current
         lines.append(
             f"  {s.position_text:>2}. {s.name:<24} {' / '.join(t.name for t in s.teams):<26}"
-            f" {_format_points(s.points):>5} pts  +{_format_points(change.points_gained):<4}"
+            f" {format_points(s.points):>5} pts  +{format_points(change.points_gained):<4}"
             f" {_format_movement(change)}".rstrip()
         )
     lines += ["", "Constructors"]
@@ -234,7 +234,7 @@ def format_report(rep: StandingsReport) -> str:
         s = change.current
         lines.append(
             f"  {s.position_text:>2}. {s.name:<24}"
-            f" {_format_points(s.points):>5} pts  +{_format_points(change.points_gained):<4}"
+            f" {format_points(s.points):>5} pts  +{format_points(change.points_gained):<4}"
             f" {_format_movement(change)}".rstrip()
         )
     lines.append(f"Source: {jolpica.SOURCE_NAME}.")

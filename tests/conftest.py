@@ -36,3 +36,21 @@ def constructor_standings_r16() -> dict[str, Any]:
 @pytest.fixture
 def constructor_standings_r17() -> dict[str, Any]:
     return load_fixture("jolpica/constructor_standings_2026_r17.json")
+
+
+@pytest.fixture
+def mclaren_2026() -> tuple[dict[str, Any], dict[str, Any]]:
+    """GET /2026/constructors/mclaren/{results,qualifying}.json, recorded 2026-10-15 (R1-R17)."""
+    return (
+        load_fixture("jolpica/mclaren_results_2026.json"),
+        load_fixture("jolpica/mclaren_qualifying_2026.json"),
+    )
+
+
+@pytest.fixture
+def mclaren_2025() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Same for the full 2025 season (R1-R24)."""
+    return (
+        load_fixture("jolpica/mclaren_results_2025.json"),
+        load_fixture("jolpica/mclaren_qualifying_2025.json"),
+    )
