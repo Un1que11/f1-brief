@@ -18,6 +18,8 @@ uv sync
 
 ```bash
 uv run f1brief --help
+uv run f1brief next              # next race weekend, session times in Europe/Warsaw
+uv run f1brief next --season 2027
 ```
 
 `python -m f1brief` works too, from inside the virtual environment.
@@ -37,4 +39,5 @@ uv run pytest
 ```
 src/f1brief/   application package
 tests/         pytest suite (no network: recorded fixtures only)
+tests/fixtures/  recorded API responses (e.g. jolpica/schedule_2026.json)
 ```

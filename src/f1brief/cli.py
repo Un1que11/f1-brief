@@ -1,9 +1,11 @@
 """Command-line entry point."""
 
 import argparse
+import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
-from f1brief import __version__
+from f1brief import __version__, schedule
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -12,9 +14,33 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and send the F1 pre-race-weekend digest.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    commands = parser.add_subparsers(dest="command")
+
+    next_cmd = commands.add_parser("next", help="show the next race weekend in Warsaw time")
+    next_cmd.add_argument("--season", default="current", help="season year (default: current)")
     return parser
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _cmd_next(season: str) -> int:
+    try:
+        races = schedule.fetch_schedule(season)
+    except schedule.ScheduleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    race = schedule.next_race(races, _now())
+    if race is None:
+        print(f"No upcoming races in season {season}.")
+        return 0
+    print(schedule.format_schedule(race))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
+    if args.command == "next":
+        return _cmd_next(args.season)
     return 0
