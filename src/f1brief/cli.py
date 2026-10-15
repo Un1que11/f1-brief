@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from f1brief import __version__, form, schedule, standings
+from f1brief import __version__, drivers, form, schedule, standings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +30,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--last", type=int, default=form.DEFAULT_ROUNDS, help="number of rounds (default: 5)"
     )
     form_cmd.add_argument("--season", default="current", help="season year (default: current)")
+
+    drivers_cmd = commands.add_parser(
+        "drivers", help="show drivers' recent form compared with their teammates"
+    )
+    drivers_cmd.add_argument(
+        "--driver",
+        action="append",
+        dest="driver_ids",
+        metavar="ID",
+        help="Jolpica driver id; repeatable (default: russell, ocon)",
+    )
+    drivers_cmd.add_argument(
+        "--last", type=int, default=form.DEFAULT_ROUNDS, help="number of races (default: 5)"
+    )
+    drivers_cmd.add_argument("--season", default="current", help="season year (default: current)")
     return parser
 
 
@@ -74,6 +89,23 @@ def _cmd_form(team: str, last: int, season: str) -> int:
     return 0
 
 
+def _cmd_drivers(driver_ids: list[str] | None, last: int, season: str) -> int:
+    if last < 1:
+        print("error: --last must be at least 1", file=sys.stderr)
+        return 2
+    blocks = []
+    for driver_id in driver_ids or drivers.FAVOURITES:
+        try:
+            blocks.append(
+                drivers.format_driver_form(drivers.fetch_driver_form(driver_id, last, season))
+            )
+        except form.FormError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    print("\n\n".join(blocks))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -82,4 +114,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_standings(args.season)
     if args.command == "form":
         return _cmd_form(args.team, args.last, args.season)
+    if args.command == "drivers":
+        return _cmd_drivers(args.driver_ids, args.last, args.season)
     return 0

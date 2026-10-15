@@ -126,3 +126,53 @@ def test_form_reports_fetch_failure(
 
     assert main(["form"]) == 1
     assert capsys.readouterr().err == "error: network down\n"
+
+
+def test_drivers_defaults_to_favourites(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from f1brief import drivers
+
+    calls: list[tuple] = []
+
+    def fake_fetch(driver_id: str, last: int, season: str) -> drivers.DriverForm:
+        calls.append((driver_id, last, season))
+        return drivers.DriverForm(driver_id, driver_id.title(), ())
+
+    monkeypatch.setattr(drivers, "fetch_driver_form", fake_fetch)
+
+    assert main(["drivers"]) == 0
+    assert calls == [("russell", 5, "current"), ("ocon", 5, "current")]
+    assert capsys.readouterr().out == (
+        "Russell: no races in the selected period.\n\nOcon: no races in the selected period.\n"
+    )
+
+
+def test_drivers_accepts_repeated_driver_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    from f1brief import drivers
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        drivers,
+        "fetch_driver_form",
+        lambda driver_id, last, season: (
+            calls.append(driver_id) or drivers.DriverForm(driver_id, "X", ())
+        ),
+    )
+
+    assert main(["drivers", "--driver", "lawson", "--driver", "norris", "--last", "3"]) == 0
+    assert calls == ["lawson", "norris"]
+
+
+def test_drivers_reports_fetch_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from f1brief import drivers, form
+
+    def boom(driver_id: str, last: int, season: str) -> None:
+        raise form.FormError("network down")
+
+    monkeypatch.setattr(drivers, "fetch_driver_form", boom)
+
+    assert main(["drivers"]) == 1
+    assert capsys.readouterr().err == "error: network down\n"

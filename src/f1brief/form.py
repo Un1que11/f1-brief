@@ -100,12 +100,12 @@ class TeamForm:
 
     @property
     def average_best_qualifying(self) -> Decimal | None:
-        return _average(q.position for r in self.rounds if (q := r.best_qualifying))
+        return average(q.position for r in self.rounds if (q := r.best_qualifying))
 
     @property
     def average_finish(self) -> Decimal | None:
         """Mean finishing position over all classified results of both cars."""
-        return _average(x.position for r in self.rounds for x in r.race if x.classified)
+        return average(x.position for r in self.rounds for x in r.race if x.classified)
 
     @property
     def non_classified(self) -> int:
@@ -127,15 +127,15 @@ class TeamForm:
                     driver_name=name,
                     starts=len(races),
                     points=sum((x.points for x in races), Decimal(0)),
-                    average_qualifying=_average(q.position for q in quali),
-                    average_finish=_average(x.position for x in races if x.classified),
+                    average_qualifying=average(q.position for q in quali),
+                    average_finish=average(x.position for x in races if x.classified),
                     non_classified=sum(1 for x in races if not x.classified),
                 )
             )
         return sorted(summaries, key=lambda s: s.points, reverse=True)
 
 
-def _average(values: Iterable[int]) -> Decimal | None:
+def average(values: Iterable[int]) -> Decimal | None:
     values = list(values)
     if not values:
         return None
@@ -236,7 +236,7 @@ def build_rounds(
     ]
 
 
-def _season_of(payload: Mapping[str, Any]) -> int:
+def season_of(payload: Mapping[str, Any]) -> int:
     try:
         return int(payload["MRData"]["RaceTable"]["season"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -251,6 +251,18 @@ def _constructor_name(rounds: Sequence[RoundForm], constructor_id: str) -> str:
     return constructor_id
 
 
+def fetch_constructor_rounds(
+    constructor_id: str, season: int | str, client: httpx.Client | None = None
+) -> tuple[int, list[RoundForm]]:
+    """One season of a constructor's completed rounds: (season year, rounds oldest first)."""
+    try:
+        results = jolpica.get_json(f"{season}/constructors/{constructor_id}/results", client)
+        quali = jolpica.get_json(f"{season}/constructors/{constructor_id}/qualifying", client)
+    except jolpica.JolpicaError as exc:
+        raise FormError(str(exc)) from exc
+    return season_of(results), build_rounds(results, quali)
+
+
 def fetch_team_form(
     constructor_id: str = "mclaren",
     last: int = DEFAULT_ROUNDS,
@@ -262,23 +274,15 @@ def fetch_team_form(
     if last < 1:
         raise ValueError("last must be at least 1")
 
-    def fetch(season_: int | str) -> tuple[int, list[RoundForm]]:
-        try:
-            results = jolpica.get_json(f"{season_}/constructors/{constructor_id}/results", client)
-            quali = jolpica.get_json(f"{season_}/constructors/{constructor_id}/qualifying", client)
-        except jolpica.JolpicaError as exc:
-            raise FormError(str(exc)) from exc
-        return _season_of(results), build_rounds(results, quali)
-
-    year, rounds = fetch(season)
+    year, rounds = fetch_constructor_rounds(constructor_id, season, client)
     if len(rounds) < last and year > 1950:
-        _, earlier = fetch(year - 1)
+        _, earlier = fetch_constructor_rounds(constructor_id, year - 1, client)
         rounds = earlier + rounds
     rounds = rounds[-last:]
     return TeamForm(constructor_id, _constructor_name(rounds, constructor_id), tuple(rounds))
 
 
-def _format_decimal(value: Decimal | None) -> str:
+def format_decimal(value: Decimal | None) -> str:
     return "-" if value is None else format(value, "f")
 
 
@@ -305,15 +309,15 @@ def format_team_form(form: TeamForm) -> str:
     lines += [
         "",
         f"Grand Prix points (sprints excluded): {format_points(form.points)}",
-        f"Average best qualifying position: {_format_decimal(form.average_best_qualifying)}",
-        f"Average finish (classified cars): {_format_decimal(form.average_finish)}",
+        f"Average best qualifying position: {format_decimal(form.average_best_qualifying)}",
+        f"Average finish (classified cars): {format_decimal(form.average_finish)}",
         f"Not classified: {form.non_classified}",
     ]
     for d in form.drivers():
         lines.append(
             f"  {d.driver_name}: {format_points(d.points)} pts, avg quali "
-            f"{_format_decimal(d.average_qualifying)}, avg finish "
-            f"{_format_decimal(d.average_finish)}, not classified {d.non_classified}"
+            f"{format_decimal(d.average_qualifying)}, avg finish "
+            f"{format_decimal(d.average_finish)}, not classified {d.non_classified}"
         )
     lines.append(f"Source: {jolpica.SOURCE_NAME}.")
     return "\n".join(lines)
