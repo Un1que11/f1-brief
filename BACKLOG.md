@@ -13,7 +13,7 @@
 - [x] F8. Pace from FastF1: median pace on long runs in the last race, favourites vs the leaders.
 - [x] F9. The favourites' history at this track (last 3 seasons).
 - [x] F10. News from RSS: filter by favourites and key topics (upgrades, penalties, regulations, contracts); a separate "Ocon's future" filter.
-- [ ] F11. Weather forecast at the track for the weekend's days (Open-Meteo).
+- [x] F11. Weather forecast at the track for the weekend's days (Open-Meteo).
 
 ## Phase 3 — digest
 - [ ] F12. Assemble all facts into one JSON with sources.
