@@ -1,7 +1,7 @@
 # Backlog — F1 Brief
 
 ## Фаза 1 — каркас
-- [ ] F1. Проект на uv, ruff, pytest, структура `src/f1brief/`, README.
+- [x] F1. Проект на uv, ruff, pytest, структура `src/f1brief/`, README.
 - [ ] F2. [light] `config.toml`: избранные, язык дайджеста, за сколько дней до FP1 слать, часовой пояс Europe/Warsaw.
 - [ ] F3. [light] GitHub Actions: ruff + pytest.
 
