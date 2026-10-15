@@ -176,3 +176,36 @@ def test_drivers_reports_fetch_failure(
 
     assert main(["drivers"]) == 1
     assert capsys.readouterr().err == "error: network down\n"
+
+
+def test_pace_prints_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import UTC, datetime
+
+    from test_pace import singapore_report
+
+    from f1brief import cli, pace
+
+    report = singapore_report()
+    seen: list[datetime] = []
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(pace, "fetch_report", lambda now: seen.append(now) or report)
+
+    assert main(["pace"]) == 0
+    assert seen == [datetime(2026, 10, 15, tzinfo=UTC)]
+    assert capsys.readouterr().out.startswith("Long-run pace, Singapore (Marina Bay)")
+
+
+def test_pace_reports_fetch_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from f1brief import pace
+
+    def boom(now: object) -> None:
+        raise pace.PaceError("network down")
+
+    monkeypatch.setattr(pace, "fetch_report", boom)
+
+    assert main(["pace"]) == 1
+    assert capsys.readouterr().err == "error: network down\n"

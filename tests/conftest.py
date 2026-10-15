@@ -54,3 +54,12 @@ def mclaren_2025() -> tuple[dict[str, Any], dict[str, Any]]:
         load_fixture("jolpica/mclaren_results_2025.json"),
         load_fixture("jolpica/mclaren_qualifying_2025.json"),
     )
+
+
+def openf1_fixture(name: str) -> Any:
+    """OpenF1 responses recorded 2026-10-15 for the 2026 Singapore GP (session 11388).
+
+    Per-segment arrays were dropped from laps to keep the files small; laps keep only the fields
+    the code reads. Everything else is as returned.
+    """
+    return json.loads((FIXTURES / "openf1" / f"{name}.json").read_text(encoding="utf-8"))

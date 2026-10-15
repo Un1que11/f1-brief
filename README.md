@@ -23,6 +23,7 @@ uv run f1brief next --season 2027
 uv run f1brief standings         # standings + changes since the previous round
 uv run f1brief form --last 5     # McLaren race/qualifying form over the last 5 rounds
 uv run f1brief drivers           # Russell and Ocon form vs their teammates
+uv run f1brief pace              # long-run pace in the last race: favourites vs leaders
 ```
 
 `python -m f1brief` works too, from inside the virtual environment.
