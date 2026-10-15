@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<!-- Synthetic feed in the format of formula1.com/en/latest/all.xml (checked 2026-10-15):
+     RSS 2.0, no item dates, dc:creator, declared us-ascii but containing UTF-8. Headlines are
+     invented for tests. -->
+<rss version="2.0" xmlns:dc="https://purl.org/dc/elements/1.1/">
+  <channel>
+    <title></title>
+    <link></link>
+    <description>Don't miss a Formula 1 moment – synthetic test feed</description>
+    <item>
+      <title>Haas confirm Ocon contract talks for 2027 – what's next?</title>
+      <link>https://example.test/f1/ocon-2027</link>
+      <guid>https://example.test/f1/ocon-2027</guid>
+      <description>Esteban Ocon on his future at the team.</description>
+      <dc:creator>Test Writer</dc:creator>
+    </item>
+    <item>
+      <title>Five things we learned from Friday practice</title>
+      <link>https://example.test/f1/five-things</link>
+      <guid>https://example.test/f1/five-things</guid>
+      <description>A look back at the opening day.</description>
+      <dc:creator>Test Writer</dc:creator>
+    </item>
+    <item>
+      <title>McLaren bring new floor to Austin</title>
+      <link>https://example.test/f1/mclaren-floor</link>
+      <guid>https://example.test/f1/mclaren-floor</guid>
+      <description>The team's latest update package.</description>
+      <dc:creator>Test Writer</dc:creator>
+    </item>
+  </channel>
+</rss>

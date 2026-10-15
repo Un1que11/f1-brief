@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from f1brief import __version__, drivers, form, pace, schedule, standings, track_history
+from f1brief import __version__, drivers, form, news, pace, schedule, standings, track_history
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=track_history.DEFAULT_EDITIONS,
         help="number of past races (default: 3)",
     )
+
+    news_cmd = commands.add_parser("news", help="show recent news about the favourites")
+    news_cmd.add_argument("--days", type=int, default=7, help="how far back (default: 7)")
     return parser
 
 
@@ -154,6 +157,19 @@ def _cmd_track(circuit_id: str | None, editions: int) -> int:
     return 0
 
 
+def _cmd_news(days: int) -> int:
+    if days < 1:
+        print("error: --days must be at least 1", file=sys.stderr)
+        return 2
+    try:
+        report = news.fetch_news(news.default_since(_now(), days))
+    except news.NewsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(news.format_report(report))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -168,4 +184,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_pace()
     if args.command == "track":
         return _cmd_track(args.circuit, args.editions)
+    if args.command == "news":
+        return _cmd_news(args.days)
     return 0

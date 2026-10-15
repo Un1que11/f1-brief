@@ -1,0 +1,285 @@
+"""F1 news from RSS feeds, filtered for the favourites and key topics.
+
+Feeds were checked on 2026-10-15: all are RSS 2.0. The official formula1.com feed has no item
+dates at all (and declares the wrong encoding, which feedparser handles); its items are kept
+with an unknown date unless the same story appears, dated, in another feed.
+"""
+
+import html
+import re
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import feedparser
+import httpx
+
+
+@dataclass(frozen=True)
+class Feed:
+    name: str
+    url: str
+
+
+FEEDS = (
+    Feed("Formula 1", "https://www.formula1.com/en/latest/all.xml"),
+    Feed("Motorsport.com", "https://www.motorsport.com/rss/f1/news/"),
+    Feed("Autosport", "https://www.autosport.com/rss/f1/news/"),
+    Feed("RaceFans", "https://www.racefans.net/feed/"),
+    Feed("BBC Sport", "https://feeds.bbci.co.uk/sport/formula1/rss.xml"),
+)
+
+FAVOURITES: dict[str, tuple[str, ...]] = {
+    "McLaren": ("McLaren",),
+    "Russell": ("Russell",),
+    "Ocon": ("Ocon",),
+}
+
+TOPICS: dict[str, tuple[str, ...]] = {
+    "upgrades": (
+        "upgrade",
+        "upgrades",
+        "upgraded",
+        "update package",
+        "new floor",
+        "new front wing",
+    ),
+    "penalties": (
+        "penalty",
+        "penalties",
+        "penalised",
+        "penalized",
+        "grid drop",
+        "disqualified",
+        "disqualification",
+        "reprimand",
+        "stewards",
+    ),
+    "regulations": (
+        "regulation",
+        "regulations",
+        "rule change",
+        "rule changes",
+        "technical directive",
+        "FIA",
+    ),
+    # Phrases rather than single words: "signs", "deal", "exit" and "seat" on their own mostly
+    # appear in race reports ("shows signs of", "deal with", "corner exit").
+    "contracts": (
+        "contract",
+        "contracts",
+        "contract extension",
+        "signs for",
+        "signed for",
+        "signs with",
+        "signed with",
+        "new deal",
+        "one-year deal",
+        "two-year deal",
+        "multi-year deal",
+        "race seat",
+        "seat for",
+        "replaces",
+        "replacement driver",
+        "to leave",
+        "will leave",
+        "leaves the team",
+        "departure",
+    ),
+}
+
+# "Ocon's future": Ocon plus wording about contracts, seats or what comes next for him.
+OCON_FUTURE_TERMS = TOPICS["contracts"] + ("future", "career", "next season", "2027")
+
+USER_AGENT = "f1brief (+https://github.com/Un1que11/f1-brief)"
+
+
+class NewsError(Exception):
+    """A feed could not be fetched or parsed."""
+
+
+def _pattern(terms: Iterable[str]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+
+
+_FAVOURITE_PATTERNS = {name: _pattern(terms) for name, terms in FAVOURITES.items()}
+_TOPIC_PATTERNS = {name: _pattern(terms) for name, terms in TOPICS.items()}
+_OCON_FUTURE = _pattern(OCON_FUTURE_TERMS)
+
+
+@dataclass(frozen=True)
+class NewsItem:
+    title: str
+    link: str
+    # UTC; None when no feed carrying the story gave a date.
+    published: datetime | None
+    summary: str
+    # Every feed that carried the story, first one first.
+    sources: tuple[str, ...]
+    favourites: frozenset[str] = field(default_factory=frozenset)
+    topics: frozenset[str] = field(default_factory=frozenset)
+    ocon_future: bool = False
+
+    @property
+    def relevant(self) -> bool:
+        return bool(self.favourites or self.topics)
+
+
+@dataclass(frozen=True)
+class NewsReport:
+    since: datetime
+    # Newest first; undated items last.
+    items: tuple[NewsItem, ...]
+    failed_feeds: tuple[str, ...]
+
+    @property
+    def ocon_future(self) -> tuple[NewsItem, ...]:
+        return tuple(i for i in self.items if i.ocon_future)
+
+
+def _clean(text: str) -> str:
+    """HTML to plain text: tags removed, entities decoded, whitespace collapsed."""
+    without_tags = re.sub(r"<[^>]+>", " ", text or "")
+    return re.sub(r"\s+", " ", html.unescape(without_tags)).strip()
+
+
+def classify(title: str, summary: str) -> tuple[frozenset[str], frozenset[str], bool]:
+    """(favourites mentioned, topics matched, is about Ocon's future)."""
+    text = f"{title} {summary}"
+    favourites = frozenset(n for n, p in _FAVOURITE_PATTERNS.items() if p.search(text))
+    topics = frozenset(n for n, p in _TOPIC_PATTERNS.items() if p.search(text))
+    ocon_future = "Ocon" in favourites and bool(_OCON_FUTURE.search(text))
+    return favourites, topics, ocon_future
+
+
+def _published(entry: Any) -> datetime | None:
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not parsed:
+        return None
+    return datetime(*parsed[:6], tzinfo=UTC)
+
+
+def parse_feed(content: bytes, source: str) -> list[NewsItem]:
+    """Items of one feed (RSS or Atom), classified. Unrelated items are kept here; filtering
+    happens in `select`."""
+    parsed = feedparser.parse(content)
+    # An HTML error page parses "successfully" with no entries; only a recognised RSS/Atom
+    # document (feedparser sets `version`) or one with entries counts as a feed.
+    if not parsed.entries and (parsed.bozo or not parsed.get("version")):
+        reason = parsed.get("bozo_exception") or "not an RSS or Atom document"
+        raise NewsError(f"{source}: unreadable feed ({reason})")
+    items = []
+    for entry in parsed.entries:
+        title = _clean(entry.get("title", ""))
+        link = entry.get("link", "")
+        if not title or not link:
+            continue
+        summary = _clean(entry.get("summary", ""))
+        favourites, topics, ocon_future = classify(title, summary)
+        items.append(
+            NewsItem(
+                title=title,
+                link=link,
+                published=_published(entry),
+                summary=summary,
+                sources=(source,),
+                favourites=favourites,
+                topics=topics,
+                ocon_future=ocon_future,
+            )
+        )
+    return items
+
+
+def _story_key(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
+def deduplicate(items: Iterable[NewsItem]) -> list[NewsItem]:
+    """Merges the same story (same link or same title) from several feeds: sources are
+    combined, the earliest known date is kept, and tags are united."""
+    merged: dict[str, NewsItem] = {}
+    by_link: dict[str, str] = {}
+    for item in items:
+        key = by_link.get(item.link) or _story_key(item.title)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = item
+        else:
+            dates = [d for d in (existing.published, item.published) if d is not None]
+            merged[key] = replace(
+                existing,
+                published=min(dates) if dates else None,
+                sources=existing.sources
+                + tuple(s for s in item.sources if s not in existing.sources),
+                favourites=existing.favourites | item.favourites,
+                topics=existing.topics | item.topics,
+                ocon_future=existing.ocon_future or item.ocon_future,
+            )
+        by_link[item.link] = key
+    return list(merged.values())
+
+
+def select(items: Iterable[NewsItem], since: datetime) -> list[NewsItem]:
+    """Relevant items published since `since` (undated ones included), newest first."""
+    chosen = [
+        i
+        for i in deduplicate(items)
+        if i.relevant and (i.published is None or i.published >= since)
+    ]
+    return sorted(chosen, key=lambda i: (i.published is None, -(i.published or since).timestamp()))
+
+
+def fetch_news(
+    since: datetime,
+    feeds: Sequence[Feed] = FEEDS,
+    client: httpx.Client | None = None,
+) -> NewsReport:
+    """Fetches every feed; a feed that fails is listed in `failed_feeds` instead of failing all."""
+    if since.tzinfo is None:
+        raise ValueError("since must be timezone-aware")
+    owns_client = client is None
+    client = client or httpx.Client(timeout=20.0, follow_redirects=True)
+    items: list[NewsItem] = []
+    failed: list[str] = []
+    try:
+        for feed in feeds:
+            try:
+                response = client.get(feed.url, headers={"User-Agent": USER_AGENT})
+                response.raise_for_status()
+                items.extend(parse_feed(response.content, feed.name))
+            except (httpx.HTTPError, NewsError):
+                failed.append(feed.name)
+    finally:
+        if owns_client:
+            client.close()
+    if failed and len(failed) == len(feeds):
+        raise NewsError(f"no feed could be read: {', '.join(failed)}")
+    return NewsReport(since=since, items=tuple(select(items, since)), failed_feeds=tuple(failed))
+
+
+def default_since(now: datetime, days: int = 7) -> datetime:
+    return now - timedelta(days=days)
+
+
+def _line(item: NewsItem, fmt: Callable[[datetime], str]) -> str:
+    when = fmt(item.published) if item.published else "date unknown"
+    tags = sorted(item.favourites) + sorted(item.topics)
+    sources = ", ".join(item.sources)
+    return f"  [{when}] {item.title} ({sources}; {', '.join(tags)})\n      {item.link}"
+
+
+def format_report(report: NewsReport) -> str:
+    def fmt(d: datetime) -> str:
+        return d.strftime("%d %b %H:%M UTC")
+
+    lines = [f"F1 news since {fmt(report.since)}: {len(report.items)} relevant items"]
+    if report.failed_feeds:
+        lines.append(f"Could not read: {', '.join(report.failed_feeds)}")
+    lines += ["", "Ocon's future"]
+    lines += [_line(i, fmt) for i in report.ocon_future] or ["  nothing new"]
+    lines += ["", "Favourites and key topics"]
+    lines += [_line(i, fmt) for i in report.items if not i.ocon_future] or ["  nothing new"]
+    return "\n".join(lines)
