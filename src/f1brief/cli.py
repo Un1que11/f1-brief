@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from f1brief import __version__, drivers, form, pace, schedule, standings
+from f1brief import __version__, drivers, form, pace, schedule, standings, track_history
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,6 +48,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser(
         "pace", help="show long-run race pace of the favourites vs the leaders (last race)"
+    )
+
+    track_cmd = commands.add_parser(
+        "track", help="show the favourites' results at a circuit over its last editions"
+    )
+    track_cmd.add_argument(
+        "--circuit", help="Jolpica circuit id (default: the next race's circuit)"
+    )
+    track_cmd.add_argument(
+        "--editions",
+        type=int,
+        default=track_history.DEFAULT_EDITIONS,
+        help="number of past races (default: 3)",
     )
     return parser
 
@@ -120,6 +133,27 @@ def _cmd_pace() -> int:
     return 0
 
 
+def _cmd_track(circuit_id: str | None, editions: int) -> int:
+    if editions < 1:
+        print("error: --editions must be at least 1", file=sys.stderr)
+        return 2
+    now = _now()
+    before = now.date()
+    try:
+        if circuit_id is None:
+            race = schedule.next_race(schedule.fetch_schedule(), now)
+            if race is None:
+                print("error: no upcoming race; pass --circuit", file=sys.stderr)
+                return 1
+            circuit_id, before = race.circuit.id, race.race.date
+        history = track_history.fetch_track_history(circuit_id, before, editions)
+    except (schedule.ScheduleError, form.FormError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(track_history.format_track_history(history))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -132,4 +166,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_drivers(args.driver_ids, args.last, args.season)
     if args.command == "pace":
         return _cmd_pace()
+    if args.command == "track":
+        return _cmd_track(args.circuit, args.editions)
     return 0

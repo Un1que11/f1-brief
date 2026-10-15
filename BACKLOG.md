@@ -11,7 +11,7 @@
 - [x] F6. McLaren form: race and qualifying positions over the last N rounds.
 - [x] F7. Russell and Ocon form + comparison with their teammate (qualifying, race).
 - [x] F8. Pace from FastF1: median pace on long runs in the last race, favourites vs the leaders.
-- [ ] F9. The favourites' history at this track (last 3 seasons).
+- [x] F9. The favourites' history at this track (last 3 seasons).
 - [ ] F10. News from RSS: filter by favourites and key topics (upgrades, penalties, regulations, contracts); a separate "Ocon's future" filter.
 - [ ] F11. Weather forecast at the track for the weekend's days (Open-Meteo).
 

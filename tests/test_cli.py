@@ -209,3 +209,59 @@ def test_pace_reports_fetch_failure(
 
     assert main(["pace"]) == 1
     assert capsys.readouterr().err == "error: network down\n"
+
+
+def test_track_defaults_to_next_race_circuit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], schedule_2026: dict
+) -> None:
+    from datetime import UTC, date, datetime
+
+    from test_track_history import austin
+
+    from f1brief import cli, schedule, track_history
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(schedule, "fetch_schedule", lambda: schedule.parse_schedule(schedule_2026))
+    monkeypatch.setattr(
+        track_history,
+        "fetch_track_history",
+        lambda circuit, before, count: calls.append((circuit, before, count)) or austin(),
+    )
+
+    assert main(["track"]) == 0
+    # Next race is Austin (R18, 25 Oct): editions before that day.
+    assert calls == [("americas", date(2026, 10, 25), 3)]
+    assert capsys.readouterr().out.startswith("Favourites at Circuit of the Americas")
+
+
+def test_track_with_explicit_circuit_uses_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, date, datetime
+
+    from test_track_history import austin
+
+    from f1brief import cli, track_history
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(
+        track_history,
+        "fetch_track_history",
+        lambda circuit, before, count: calls.append((circuit, before, count)) or austin(),
+    )
+
+    assert main(["track", "--circuit", "monaco", "--editions", "2"]) == 0
+    assert calls == [("monaco", date(2026, 10, 15), 2)]
+
+
+def test_track_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from f1brief import form, track_history
+
+    assert main(["track", "--circuit", "x", "--editions", "0"]) == 2
+
+    def boom(circuit: str, before: object, count: int) -> None:
+        raise form.FormError("network down")
+
+    monkeypatch.setattr(track_history, "fetch_track_history", boom)
+    assert main(["track", "--circuit", "x"]) == 1
+    assert capsys.readouterr().err.endswith("error: network down\n")
