@@ -21,6 +21,7 @@ uv run f1brief --help
 uv run f1brief next              # next race weekend, session times in Europe/Warsaw
 uv run f1brief next --season 2027
 uv run f1brief standings         # standings + changes since the previous round
+uv run f1brief form --last 5     # McLaren race/qualifying form over the last 5 rounds
 ```
 
 `python -m f1brief` works too, from inside the virtual environment.

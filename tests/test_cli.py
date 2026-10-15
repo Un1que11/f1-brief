@@ -87,3 +87,42 @@ def test_standings_reports_fetch_failure(
 
     assert main(["standings"]) == 1
     assert capsys.readouterr().err == "error: network down\n"
+
+
+def test_form_prints_team_form(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mclaren_2026: tuple
+) -> None:
+    from f1brief import form
+
+    rounds = form.build_rounds(*mclaren_2026)
+    team_form = form.TeamForm("mclaren", "McLaren", tuple(rounds[-3:]))
+    calls: list[tuple] = []
+
+    def fake_fetch(team: str, last: int, season: str) -> form.TeamForm:
+        calls.append((team, last, season))
+        return team_form
+
+    monkeypatch.setattr(form, "fetch_team_form", fake_fetch)
+
+    assert main(["form", "--last", "3"]) == 0
+    assert calls == [("mclaren", 3, "current")]
+    assert capsys.readouterr().out.startswith("McLaren form, last 3 rounds")
+
+
+def test_form_rejects_non_positive_last(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["form", "--last", "0"]) == 2
+    assert "at least 1" in capsys.readouterr().err
+
+
+def test_form_reports_fetch_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from f1brief import form
+
+    def boom(team: str, last: int, season: str) -> None:
+        raise form.FormError("network down")
+
+    monkeypatch.setattr(form, "fetch_team_form", boom)
+
+    assert main(["form"]) == 1
+    assert capsys.readouterr().err == "error: network down\n"
