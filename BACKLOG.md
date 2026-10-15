@@ -1,28 +1,28 @@
 # Backlog — F1 Brief
 
-## Фаза 1 — каркас
-- [x] F1. Проект на uv, ruff, pytest, структура `src/f1brief/`, README.
-- [ ] F2. [light] `config.toml`: избранные, язык дайджеста, за сколько дней до FP1 слать, часовой пояс Europe/Warsaw.
+## Phase 1 — skeleton
+- [x] F1. Project with uv, ruff, pytest, `src/f1brief/` layout, README.
+- [ ] F2. [light] `config.toml`: favourites, digest language, how many days before FP1 to send, time zone Europe/Warsaw.
 - [ ] F3. [light] GitHub Actions: ruff + pytest.
 
-## Фаза 2 — сбор фактов (каждый сборщик возвращает типизированную модель, тесты на фикстурах)
-- [x] F4. Календарь и ближайший этап (Jolpica), расписание сессий в варшавском времени.
-- [x] F5. Зачёты пилотов и команд + изменения с прошлого этапа.
-- [x] F6. Форма McLaren: позиции в гонках и квалификациях за последние N этапов.
-- [x] F7. Форма Russell и Ocon + сравнение с напарником (квалификация, гонка).
-- [x] F8. Темп по FastF1: медианный темп на длинных отрезках прошлой гонки для избранных vs лидеры.
-- [ ] F9. История избранных на этой трассе (последние 3 сезона).
-- [ ] F10. Новости из RSS: фильтр по избранным и ключевым темам (апгрейды, штрафы, регламент, контракты); отдельный фильтр «будущее Окона».
-- [ ] F11. Прогноз погоды на трассе на дни уик-энда (Open-Meteo).
+## Phase 2 — collecting facts (each collector returns a typed model; tests on fixtures)
+- [x] F4. Calendar and the next round (Jolpica), session schedule in Warsaw time.
+- [x] F5. Driver and constructor standings + changes since the previous round.
+- [x] F6. McLaren form: race and qualifying positions over the last N rounds.
+- [x] F7. Russell and Ocon form + comparison with their teammate (qualifying, race).
+- [x] F8. Pace from FastF1: median pace on long runs in the last race, favourites vs the leaders.
+- [ ] F9. The favourites' history at this track (last 3 seasons).
+- [ ] F10. News from RSS: filter by favourites and key topics (upgrades, penalties, regulations, contracts); a separate "Ocon's future" filter.
+- [ ] F11. Weather forecast at the track for the weekend's days (Open-Meteo).
 
-## Фаза 3 — дайджест
-- [ ] F12. Сборка всех фактов в один JSON с источниками.
-- [ ] F13. Генерация текста через `claude -p` по шаблону промпта; тест, что промпт содержит только факты из JSON.
-- [ ] F14. Форматирование под Telegram (MarkdownV2, экранирование, лимит длины сообщения с разбиением).
-- [ ] F15. Отправка через Bot API + режим `--dry-run` (печать в консоль).
+## Phase 3 — digest
+- [ ] F12. Assemble all facts into one JSON with sources.
+- [ ] F13. Text generation via `claude -p` from a prompt template; a test that the prompt contains only facts from the JSON.
+- [ ] F14. Telegram formatting (MarkdownV2, escaping, splitting at the message length limit).
+- [ ] F15. Sending via the Bot API + a `--dry-run` mode (print to the console).
 
-## Фаза 4 — автоматизация
-- [ ] F16. Логика «пора ли слать» + защита от повторной отправки (состояние в SQLite).
-- [ ] F17. [light] plist для launchd + инструкция установки.
-- [ ] F18. Межсезонье: вместо дайджестов — короткая сводка раз в месяц (переходы, тесты, новости избранных).
-- [ ] F19. Опционально: короткое сообщение после квалификации — стартовые позиции избранных и что это значит для гонки.
+## Phase 4 — automation
+- [ ] F16. "Is it time to send" logic + protection against sending twice (state in SQLite).
+- [ ] F17. [light] launchd plist + installation instructions.
+- [ ] F18. Off-season: instead of digests, a short monthly summary (driver moves, testing, favourites' news).
+- [ ] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.

@@ -1,47 +1,47 @@
-# F1 Brief — дайджест перед гоночным уик-эндом
+# F1 Brief — a digest before each race weekend
 
-## Цель
-За ~2 дня до первой практики присылать Мише в Telegram краткий дайджест на русском: что изменилось с прошлой гонки в целом и у его любимых, и на что рассчитывать в этот уик-энд. Работает локально на MacBook.
+## Goal
+About 2 days before the first practice session, send Misha a short digest in Russian via Telegram: what has changed since the last race, overall and for his favourites, and what to expect this weekend. Runs locally on a MacBook.
 
-## Избранное (в `config.toml`)
-- Команда: McLaren
-- Гонщики: George Russell, Esteban Ocon
-- По Окону отдельно следить за новостями о его будущем в F1 (контракт, переходы).
+## Favourites (in `config.toml`)
+- Team: McLaren
+- Drivers: George Russell, Esteban Ocon
+- For Ocon, also track news about his future in F1 (contract, moves).
 
-## Стек
+## Stack
 - Python 3.12+, uv, ruff, pytest
-- Данные: FastF1 (результаты, круги, телеметрия), Jolpica-F1 API (преемник Ergast: календарь, зачёты), OpenF1 (при необходимости), RSS официальных и крупных F1-изданий для новостей, Open-Meteo для прогноза погоды на трассе
-- Генерация текста: headless Claude Code (`claude -p`) получает **только** собранный JSON с фактами и пишет по нему дайджест
-- Доставка: Telegram Bot API (токен и chat_id в `.env`, не коммитится)
-- Расписание: launchd, запуск каждый день; скрипт сам решает, пора ли слать (за 2 дня до FP1, один раз на этап)
+- Data: FastF1 (results, laps, telemetry), Jolpica-F1 API (the successor to Ergast: calendar, standings), OpenF1 (when needed), RSS from official and major F1 outlets for news, Open-Meteo for the weather forecast at the track
+- Text generation: headless Claude Code (`claude -p`) receives **only** the collected JSON of facts and writes the digest from it
+- Delivery: Telegram Bot API (token and chat_id in `.env`, never committed)
+- Schedule: launchd, runs every day; the script itself decides whether it is time to send (2 days before FP1, once per round)
 
-## Структура дайджеста
-1. Этап, трасса, расписание сессий по варшавскому времени
-2. Что изменилось с прошлой гонки: зачёты, штрафы, регламент, апгрейды
-3. McLaren: форма за последние 3–5 гонок, темп, квалификации, апгрейды
-4. Russell и Ocon: результаты, сравнение с напарником, новости
-5. Трасса: характер, история результатов избранных на ней
-6. Погода
-7. «На что рассчитывать»: 3–5 пунктов с объяснением, на чём основан прогноз
+## Digest structure
+1. Round, track, session schedule in Warsaw time
+2. What has changed since the last race: standings, penalties, regulations, upgrades
+3. McLaren: form over the last 3–5 races, pace, qualifying, upgrades
+4. Russell and Ocon: results, comparison with their teammate, news
+5. The track: its character, the favourites' past results there
+6. Weather
+7. "What to expect": 3–5 points, each explaining what the prediction is based on
 
-## Правила автономной работы
-1. За одну сессию берёшь **одну** первую незакрытую задачу из `BACKLOG.md`.
-2. Ветка `feat/<id>-<slug>`, PR с описанием, что сделано и как проверить.
-3. `ruff check`, `ruff format --check` и `pytest` должны проходить до открытия PR.
-4. Сетевые запросы в тестах не делаются — только записанные фикстуры.
-5. Никаких выдуманных фактов: всё в дайджесте должно прослеживаться к собранным данным. Промпт для генерации явно это требует, а у каждого пункта есть источник.
-6. Не коммить токены и `.env`.
-7. Если не хватает информации — пометь задачу `BLOCKED: <вопрос>` и переходи к следующей.
-8. Отметь задачу `[x]` в BACKLOG в том же PR.
+## Rules for autonomous work
+1. Each session takes **one** task: the first open one in `BACKLOG.md`.
+2. Branch `feat/<id>-<slug>`, and a PR describing what was done and how to verify it.
+3. `ruff check`, `ruff format --check` and `pytest` must pass before the PR is opened.
+4. No network requests in tests: recorded fixtures only.
+5. No made-up facts: everything in the digest must trace back to collected data. The generation prompt requires this explicitly, and every point has a source.
+6. Never commit tokens or `.env`.
+7. If information is missing, mark the task `BLOCKED: <question>` and move on to the next one.
+8. Tick the task `[x]` in BACKLOG in the same PR.
 
-## Режимы работы: день и ночь
-- **День (вручную, Миша запускает сам):** тяжёлые задачи из бэклога — по одной, по правилам выше.
-- **Ночь (запланированная задача):** только лёгкая работа:
-  1. Ревью открытых PR: оставить комментарий с найденными багами, рисками и пропущенными тестами.
-  2. Багфиксы: если в открытом PR падают проверки или ревью нашло явный баг — исправить коммитом в ту же ветку.
-  3. Если открытых PR нет или они в порядке — взять первую незакрытую задачу с пометкой `[light]` из BACKLOG.md.
-  4. Тяжёлые задачи (без `[light]`) ночью не начинать. Если лёгких нет — ничего не делать и коротко об этом сообщить.
-- Пометку `[light]` Миша ставит сам; ночью её не ставить и не снимать.
+## Work modes: day and night
+- **Day (manual, Misha starts it):** heavy backlog tasks, one at a time, following the rules above.
+- **Night (scheduled task):** light work only:
+  1. Review open PRs: leave a comment with bugs found, risks and missing tests.
+  2. Bug fixes: if an open PR has failing checks or the review found an obvious bug, fix it with a commit on the same branch.
+  3. If there are no open PRs, or they are fine, take the first open task marked `[light]` in BACKLOG.md.
+  4. Do not start heavy tasks (without `[light]`) at night. If there are no light tasks, do nothing and report that briefly.
+- Misha sets the `[light]` tag himself; at night, never add or remove it.
 
-## Язык
-Коммиты, ветки, описания PR, комментарии к коду и ревью — только на английском.
+## Language
+Commits, branches, PR descriptions, code comments and reviews: English only.
