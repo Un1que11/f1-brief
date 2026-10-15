@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic feed in the format of motorsport.com / autosport.com F1 RSS (checked 2026-10-15):
+     RSS 2.0, HTML descriptions, categories, RFC 822 dates with +0000. Headlines invented. -->
+<rss version="2.0">
+  <channel>
+    <title>F1 news (synthetic)</title>
+    <link>https://example.test/</link>
+    <description>Synthetic test feed</description>
+    <item>
+      <title>Russell handed five-place grid penalty</title>
+      <link>https://example.test/ms/russell-penalty</link>
+      <guid isPermaLink="false">ms-1001</guid>
+      <description>&lt;p&gt;The &lt;b&gt;stewards&lt;/b&gt; ruled after the session.&lt;/p&gt;&lt;img src="x.jpg"/&gt;</description>
+      <category>F1</category>
+      <category>George Russell</category>
+      <pubDate>Wed, 14 Oct 2026 18:30:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>McLaren bring new floor to Austin</title>
+      <link>https://example.test/ms/mclaren-floor</link>
+      <guid isPermaLink="false">ms-1002</guid>
+      <description>&lt;p&gt;Another upgrade for the papaya team.&lt;/p&gt;</description>
+      <category>F1</category>
+      <pubDate>Tue, 13 Oct 2026 09:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Verstappen shows signs of strong pace, says rivals must deal with it</title>
+      <link>https://example.test/ms/verstappen-pace</link>
+      <guid isPermaLink="false">ms-1003</guid>
+      <description>&lt;p&gt;Traction on corner exit was the key, and the seat position was unchanged.&lt;/p&gt;</description>
+      <category>F1</category>
+      <pubDate>Wed, 14 Oct 2026 12:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>FIA publishes technical directive on flexible wings</title>
+      <link>https://example.test/ms/fia-td</link>
+      <guid isPermaLink="false">ms-1004</guid>
+      <description>&lt;p&gt;New rules apply from the next round.&lt;/p&gt;</description>
+      <category>F1</category>
+      <pubDate>Mon, 05 Oct 2026 08:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

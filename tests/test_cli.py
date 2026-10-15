@@ -265,3 +265,36 @@ def test_track_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     monkeypatch.setattr(track_history, "fetch_track_history", boom)
     assert main(["track", "--circuit", "x"]) == 1
     assert capsys.readouterr().err.endswith("error: network down\n")
+
+
+def test_news_uses_window_and_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import UTC, datetime
+
+    from f1brief import cli, news
+
+    seen: list[datetime] = []
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(
+        news,
+        "fetch_news",
+        lambda since: seen.append(since) or news.NewsReport(since=since, items=(), failed_feeds=()),
+    )
+
+    assert main(["news", "--days", "3"]) == 0
+    assert seen == [datetime(2026, 10, 12, tzinfo=UTC)]
+    assert capsys.readouterr().out.startswith("F1 news since 12 Oct 00:00 UTC")
+
+
+def test_news_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from f1brief import news
+
+    assert main(["news", "--days", "0"]) == 2
+
+    def boom(since: object) -> None:
+        raise news.NewsError("no feed could be read")
+
+    monkeypatch.setattr(news, "fetch_news", boom)
+    assert main(["news"]) == 1
+    assert capsys.readouterr().err.endswith("error: no feed could be read\n")

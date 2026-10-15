@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic feed in the format of feeds.bbci.co.uk/sport/formula1/rss.xml (checked
+     2026-10-15): RSS 2.0, plain-text descriptions, RFC 822 dates in GMT. Headlines invented. -->
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>BBC Sport - Formula 1 (synthetic)</title>
+    <link>https://example.test/bbc</link>
+    <description>Synthetic test feed</description>
+    <item>
+      <title>Haas confirm Ocon contract talks for 2027 - what's next?</title>
+      <link>https://example.test/bbc/ocon-2027</link>
+      <guid isPermaLink="false">bbc-2001</guid>
+      <description>Esteban Ocon could sign a new deal before the season ends.</description>
+      <pubDate>Thu, 15 Oct 2026 07:15:00 GMT</pubDate>
+      <media:thumbnail width="240" height="135" url="https://example.test/t.jpg"/>
+    </item>
+    <item>
+      <title>Hamilton reflects on his weekend</title>
+      <link>https://example.test/bbc/hamilton</link>
+      <guid isPermaLink="false">bbc-2002</guid>
+      <description>Thoughts after the race.</description>
+      <pubDate>Thu, 15 Oct 2026 06:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>
