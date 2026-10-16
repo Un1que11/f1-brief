@@ -87,6 +87,16 @@ TOPICS: dict[str, tuple[str, ...]] = {
         "leaves the team",
         "departure",
     ),
+    # Off-season (F18): car launches and tests. Phrases again: "test" alone is too common.
+    "testing": (
+        "pre-season testing",
+        "pre-season test",
+        "winter testing",
+        "shakedown",
+        "filming day",
+        "car launch",
+        "livery launch",
+    ),
 }
 
 # "Ocon's future": Ocon plus wording about contracts, seats or what comes next for him.

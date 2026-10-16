@@ -24,7 +24,7 @@
 ## Phase 4 — automation
 - [x] F16. "Is it time to send" logic + protection against sending twice (state in SQLite).
 - [ ] F17. [light] launchd plist + installation instructions.
-- [ ] F18. Off-season: instead of digests, a short monthly summary (driver moves, testing, favourites' news).
+- [x] F18. Off-season: instead of digests, a short monthly summary (driver moves, testing, favourites' news).
 - [ ] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.
 
 ## Phase 5 — favourites as config + hot stories (see "Hot stories" in CLAUDE.md)

@@ -112,10 +112,65 @@ def test_a_news_title_cannot_close_the_facts_block() -> None:
 
 
 def test_template_needs_exactly_one_marker(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(digest, "template", lambda: "no marker here")
+    monkeypatch.setattr(digest, "template", lambda name=None: "no marker here")
 
     with pytest.raises(ValueError, match="exactly once"):
         digest.build_prompt({})
+
+
+# --- the off-season summary (F18) uses its own fixed template ------------------------------
+
+
+def test_summary_prompt_is_its_own_template_plus_the_document() -> None:
+    document = {"kind": "monthly_summary", "sections": {"news": {"items": []}}, "missing": []}
+    prompt = digest.build_prompt(document, digest.SUMMARY_TEMPLATE)
+
+    assert facts_of(prompt) == document
+    outside = FACTS_BLOCK.sub("<facts>\n" + digest.FACTS_MARKER + "\n</facts>", prompt)
+    assert outside == digest.template(digest.SUMMARY_TEMPLATE)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [digest.template(digest.SUMMARY_TEMPLATE), digest.SUMMARY_SYSTEM_PROMPT],
+    ids=["template", "system prompt"],
+)
+def test_nothing_factual_outside_the_summary_document(document: dict[str, Any], text: str) -> None:
+    known = set(names(document)) | set(document["favourites"]["drivers"])
+    known.add(document["favourites"]["team"])
+    leaked = [n for n in known if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
+    assert leaked == []
+    unnumbered = re.sub(r"^\d+\. ", "", text, flags=re.MULTILINE)
+    assert set(re.findall(r"\d+", unnumbered)) <= {"1"}
+    assert "http" not in text
+
+
+def test_summary_template_states_the_rules() -> None:
+    text = digest.template(digest.SUMMARY_TEMPLATE)
+
+    assert "Write the summary in Russian." in text
+    assert "Use only the facts in the document above." in text
+    assert "Every point names its source" in text
+    assert "Never guess" in text
+    sections = re.findall(r"^(\d)\. ", text.split("## Summary structure")[1], re.MULTILINE)
+    assert sections == ["1", "2", "3", "4"]
+
+
+def test_generate_summary_uses_the_summary_template() -> None:
+    prompts: list[str] = []
+
+    def model(prompt: str) -> str:
+        prompts.append(prompt)
+        return "1. Переходы"
+
+    assert digest.generate_summary({"kind": "monthly_summary"}, model) == "1. Переходы"
+    assert prompts == [digest.build_prompt({"kind": "monthly_summary"}, digest.SUMMARY_TEMPLATE)]
+
+
+def test_summary_claude_has_its_own_system_prompt() -> None:
+    command = digest.ClaudeCli(system_prompt=digest.SUMMARY_SYSTEM_PROMPT).command()
+    assert command[command.index("--system-prompt") + 1] == digest.SUMMARY_SYSTEM_PROMPT
+    assert command[command.index("--tools") + 1] == ""
 
 
 # --- claude -p --------------------------------------------------------------------------
