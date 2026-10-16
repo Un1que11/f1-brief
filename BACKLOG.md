@@ -25,7 +25,7 @@
 - [x] F16. "Is it time to send" logic + protection against sending twice (state in SQLite).
 - [ ] F17. [light] launchd plist + installation instructions.
 - [x] F18. Off-season: instead of digests, a short monthly summary (driver moves, testing, favourites' news).
-- [ ] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.
+- [x] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.
 
 ## Phase 5 — favourites as config + hot stories (see "Hot stories" in CLAUDE.md)
 - [ ] F20. Favourites from `config.toml` everywhere: replace the hardcoded McLaren/Russell/Ocon constants in form, drivers, pace, track_history, news and cli with config lists; add Haas and Bearman. Teammate comparison must work when two favourites are teammates (Ocon and Bearman at Haas): show the head-to-head once, not twice. Depends on F2.

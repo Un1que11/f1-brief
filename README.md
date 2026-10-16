@@ -40,6 +40,9 @@ uv run f1brief forget --season 2026 --round 18   # allow `run` to send that roun
 uv run f1brief summary --prompt-only       # the off-season monthly summary's prompt, today
 uv run f1brief summary                     # the monthly summary text (never sent)
 uv run f1brief forget --month 2027-01      # allow `run` to send that month's summary again
+uv run f1brief quali --round 17 --prompt-only   # the prompt of the message after qualifying
+uv run f1brief quali                       # that message for the current weekend (never sent)
+uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -90,6 +93,17 @@ latest items, so every off-season run also keeps the relevant news it fetched in
 and the summary reads it back. The prompt is `src/f1brief/summary_prompt.md`, with the same
 rules as the digest's. `summary` writes one on any day without sending it (`--prompt-only`
 for the prompt); it reads the archive but adds nothing to it.
+
+During a race weekend `run` also sends a short message after qualifying: the favourites'
+positions, the comparison with their teammates and what that means for the race. It is due
+from two hours after the qualifying start until the race starts, once per round (`forget
+--qualifying` allows another send), with the same claim and partial rules as the digest. While
+Jolpica has not published the classification yet, the run sends nothing and the next one tries
+again. The facts are the qualifying classification, the favourite drivers' recent form (grid
+against finish) and the news since FP1; Jolpica has no starting grid before the race, so grid
+penalties come only from the news. The prompt is `src/f1brief/qualifying_prompt.md`. `quali`
+writes the message for any round without sending it (`--round`, `--season`; `--driver` and
+`--team` to try other favourites; `--prompt-only` for the prompt).
 
 `python -m f1brief` works too, from inside the virtual environment.
 

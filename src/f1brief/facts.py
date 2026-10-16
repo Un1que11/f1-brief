@@ -38,7 +38,7 @@ _HOSTS = {
 _FEEDS = {feed.url: feed.name for feed in news.FEEDS}
 
 # Errors that mean "this section could not be collected"; anything else is a bug and propagates.
-_COLLECTION_ERRORS = (
+COLLECTION_ERRORS = (
     jolpica.JolpicaError,
     openf1.OpenF1Error,
     news.NewsError,
@@ -47,7 +47,7 @@ _COLLECTION_ERRORS = (
 
 
 @dataclass
-class _Recorder:
+class Recorder:
     """Records every request made through the client, so each section can cite them."""
 
     urls: list[str] = field(default_factory=list)
@@ -402,7 +402,7 @@ def collect(
         raise ValueError("now must be timezone-aware")
     owns_client = client is None
     client = client or httpx.Client(timeout=30.0, follow_redirects=True)
-    recorder = _Recorder()
+    recorder = Recorder()
     client.event_hooks["request"].append(recorder)
     sections: dict[str, dict[str, Any] | None] = {}
     missing: list[dict[str, str]] = []
@@ -413,7 +413,7 @@ def collect(
         except weather.ForecastNotAvailable as exc:
             sections[name] = None
             missing.append({"section": name, "reason": f"beyond the forecast range: {exc}"})
-        except _COLLECTION_ERRORS as exc:
+        except COLLECTION_ERRORS as exc:
             sections[name] = None
             missing.append({"section": name, "reason": str(exc)})
         else:

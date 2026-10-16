@@ -1,6 +1,7 @@
 """What has been sent: a small SQLite file (git-ignored, see `*.db`).
 
-One row per round's digest (`sends`) and one per off-season month's summary (`summaries`).
+One row per round's digest (`sends`), per round's message after qualifying
+(`qualifying_sends`, F19) and per off-season month's summary (`summaries`).
 A run claims the row right before sending (`claim`, atomic, so two runs at once cannot both
 send), then records the outcome. A row that says `sending` or `partial` means some messages
 may be in the chat already, so it is never sent again by itself; `forget` removes the row
@@ -20,6 +21,15 @@ _MONTH = "month = ?"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sends (
+    season INTEGER NOT NULL,
+    round INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    messages INTEGER,
+    PRIMARY KEY (season, round)
+);
+CREATE TABLE IF NOT EXISTS qualifying_sends (
     season INTEGER NOT NULL,
     round INTEGER NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
@@ -149,10 +159,8 @@ class SendLog:
     def _forget(self, table: str, where: str, key: tuple[object, ...]) -> bool:
         return self._execute(f"DELETE FROM {table} WHERE {where}", key).rowcount == 1
 
-    # --- a round's digest ------------------------------------------------------------------
-
-    def get(self, season: int, round: int) -> SendRecord | None:
-        row = self._get("sends", _ROUND, (season, round))
+    def _round_record(self, table: str, season: int, round: int) -> SendRecord | None:
+        row = self._get(table, _ROUND, (season, round))
         if row is None:
             return None
         status, started_at, finished_at, messages = row
@@ -164,6 +172,11 @@ class SendLog:
             finished_at=datetime.fromisoformat(finished_at) if finished_at else None,
             messages=messages,
         )
+
+    # --- a round's digest ------------------------------------------------------------------
+
+    def get(self, season: int, round: int) -> SendRecord | None:
+        return self._round_record("sends", season, round)
 
     def claim(self, season: int, round: int, now: datetime) -> bool:
         """Marks the round as being sent; False when it already has a row (sent, partly
@@ -193,6 +206,32 @@ class SendLog:
     def forget(self, season: int, round: int) -> bool:
         """Removes the round's row whatever its status; False when there was none."""
         return self._forget("sends", _ROUND, (season, round))
+
+    # --- a round's message after qualifying (F19) ------------------------------------------
+
+    def get_qualifying(self, season: int, round: int) -> SendRecord | None:
+        return self._round_record("qualifying_sends", season, round)
+
+    def claim_qualifying(self, season: int, round: int, now: datetime) -> bool:
+        return self._claim("qualifying_sends", "season, round", (season, round), now)
+
+    def mark_qualifying_sent(self, season: int, round: int, now: datetime, messages: int) -> None:
+        what = f"qualifying message {season}/{round}"
+        self._finish("qualifying_sends", _ROUND, (season, round), Status.SENT, now, messages, what)
+
+    def mark_qualifying_partial(
+        self, season: int, round: int, now: datetime, delivered: int
+    ) -> None:
+        what = f"qualifying message {season}/{round}"
+        self._finish(
+            "qualifying_sends", _ROUND, (season, round), Status.PARTIAL, now, delivered, what
+        )
+
+    def release_qualifying(self, season: int, round: int) -> None:
+        self._release("qualifying_sends", _ROUND, (season, round))
+
+    def forget_qualifying(self, season: int, round: int) -> bool:
+        return self._forget("qualifying_sends", _ROUND, (season, round))
 
     # --- an off-season month's summary -----------------------------------------------------
 

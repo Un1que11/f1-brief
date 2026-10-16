@@ -1,7 +1,8 @@
 """The digest text, written by headless Claude Code (`claude -p`) from the facts document alone.
 
-The prompt is a fixed template (`digest_prompt.md`, or `summary_prompt.md` for the off-season
-monthly summary) with the facts JSON (F12, F18) inserted, and nothing else: no names, results
+The prompt is a fixed template (`digest_prompt.md`; `summary_prompt.md` for the off-season
+monthly summary; `qualifying_prompt.md` for the message after qualifying) with the facts JSON
+(F12, F18, F19) inserted, and nothing else: no names, results
 or dates live in the template. Claude runs without tools, MCP servers or user settings, from an
 empty directory, so it cannot read or fetch anything besides the prompt either.
 """
@@ -17,6 +18,7 @@ from typing import Any, Protocol
 FACTS_MARKER = "{{FACTS_JSON}}"
 DIGEST_TEMPLATE = "digest_prompt.md"
 SUMMARY_TEMPLATE = "summary_prompt.md"
+QUALIFYING_TEMPLATE = "qualifying_prompt.md"
 TIMEOUT_S = 600.0
 
 # Replaces Claude Code's default (coding agent) system prompt. Fact-free, like the template.
@@ -26,6 +28,10 @@ SYSTEM_PROMPT = (
 )
 SUMMARY_SYSTEM_PROMPT = (
     "You write a monthly off-season F1 summary strictly from the facts document in the "
+    "user's message. You have no tools and use no other knowledge."
+)
+QUALIFYING_SYSTEM_PROMPT = (
+    "You write a short F1 message after qualifying strictly from the facts document in the "
     "user's message. You have no tools and use no other knowledge."
 )
 
@@ -126,3 +132,9 @@ def generate_summary(document: dict[str, Any], model: TextModel | None = None) -
     """The monthly summary text for a document from `f1brief.offseason.collect`."""
     model = model or ClaudeCli(system_prompt=SUMMARY_SYSTEM_PROMPT)
     return model(build_prompt(document, SUMMARY_TEMPLATE))
+
+
+def generate_after_qualifying(document: dict[str, Any], model: TextModel | None = None) -> str:
+    """The message text for a document from `f1brief.after_qualifying.collect`."""
+    model = model or ClaudeCli(system_prompt=QUALIFYING_SYSTEM_PROMPT)
+    return model(build_prompt(document, QUALIFYING_TEMPLATE))

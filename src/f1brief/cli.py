@@ -12,6 +12,7 @@ import httpx
 
 from f1brief import (
     __version__,
+    after_qualifying,
     digest,
     drivers,
     facts,
@@ -124,6 +125,35 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"SQLite file with the archived news (default: {send_log.DEFAULT_STATE_FILE})",
     )
 
+    quali_cmd = commands.add_parser(
+        "quali",
+        help="write the message after qualifying for a round now, whatever the time (it is "
+        "not sent)",
+    )
+    quali_cmd.add_argument("--season", default="current", help="season year (default: current)")
+    quali_cmd.add_argument(
+        "--round", type=int, help="round number (default: the next race that has not started)"
+    )
+    quali_cmd.add_argument(
+        "--driver",
+        action="append",
+        dest="driver_ids",
+        metavar="ID",
+        help="favourite Jolpica driver id; repeatable (default: russell, ocon)",
+    )
+    quali_cmd.add_argument(
+        "--team",
+        action="append",
+        dest="team_ids",
+        metavar="ID",
+        help="favourite Jolpica constructor id; repeatable (default: mclaren)",
+    )
+    quali_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
+    quali_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    quali_cmd.add_argument(
+        "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+
     format_cmd = commands.add_parser(
         "format", help="show a digest text as Telegram messages (MarkdownV2, split to fit)"
     )
@@ -174,16 +204,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     due_cmd = commands.add_parser(
         "due",
-        help="show whether it is time to send the next round's digest (or, in the "
-        "off-season, the monthly summary)",
+        help="show whether it is time to send the next round's digest or its message after "
+        "qualifying (or, in the off-season, the monthly summary)",
     )
     add_days_before(due_cmd)
     add_state(due_cmd)
 
     run_cmd = commands.add_parser(
         "run",
-        help="the daily job: when the digest (or, in the off-season, the monthly summary) is "
-        "due, write it and send it, once",
+        help="the daily job: when the digest, the message after qualifying (or, in the "
+        "off-season, the monthly summary) is due, write it and send it, once",
     )
     add_days_before(run_cmd)
     add_state(run_cmd)
@@ -202,11 +232,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     forget_cmd = commands.add_parser(
         "forget",
-        help="drop a round (or an off-season month) from the state file, so that `run` may "
-        "send it again",
+        help="drop a round (its message after qualifying, or an off-season month) from the "
+        "state file, so that `run` may send it again",
     )
     forget_cmd.add_argument("--season", type=int)
     forget_cmd.add_argument("--round", type=int)
+    forget_cmd.add_argument(
+        "--qualifying",
+        action="store_true",
+        help="the round's message after qualifying instead of its digest",
+    )
     forget_cmd.add_argument("--month", metavar="YYYY-MM", help="an off-season month's summary")
     add_state(forget_cmd)
     return parser
@@ -214,6 +249,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# The favourites the collectors use today; F20 replaces them with the lists in config.toml.
+def _favourite_drivers() -> tuple[str, ...]:
+    return tuple(drivers.FAVOURITES)
+
+
+def _favourite_teams() -> tuple[str, ...]:
+    return (track_history.FAVOURITE_TEAM,)
 
 
 def _cmd_next(season: str) -> int:
@@ -505,6 +549,9 @@ def _cmd_due(days_before: int, state: str) -> int:
             print(send_window.describe(decision))
             if decision.due:
                 return 0
+            quali = after_qualifying.decide(races, _now(), log)
+            if quali.under_way:
+                print(after_qualifying.describe(quali))
             summary = _decide_summary(races, log)
             if summary is None:
                 return 1
@@ -557,6 +604,18 @@ def _round_target(log: send_log.SendLog, race: schedule.Race) -> _Target:
         release=lambda: log.release(season, round_),
         mark_partial=lambda now, n: log.mark_partial(season, round_, now, n),
         mark_sent=lambda now, n: log.mark_sent(season, round_, now, n),
+    )
+
+
+def _qualifying_target(log: send_log.SendLog, race: schedule.Race) -> _Target:
+    season, round_ = race.season, race.round
+    return _Target(
+        label=f"the message after qualifying for round {round_} of {season}",
+        forget_args=f"--season {season} --round {round_} --qualifying",
+        claim=lambda now: log.claim_qualifying(season, round_, now),
+        release=lambda: log.release_qualifying(season, round_),
+        mark_partial=lambda now, n: log.mark_qualifying_partial(season, round_, now, n),
+        mark_sent=lambda now, n: log.mark_qualifying_sent(season, round_, now, n),
     )
 
 
@@ -643,6 +702,44 @@ def _summary_for(
     return _messages(text)
 
 
+def _classification(race: schedule.Race) -> list[form.QualifyingResult] | None:
+    """The round's qualifying classification (empty, after saying so, while it is not
+    published), or None (after printing why) when Jolpica failed."""
+    try:
+        results = after_qualifying.fetch_classification(race)
+    except form.FormError as exc:
+        print(f"error: qualifying: {exc}", file=sys.stderr)
+        return None
+    if not results:
+        print(
+            f"the qualifying classification for {race.name} is not published yet",
+            file=sys.stderr,
+        )
+    return results
+
+
+def _qualifying_document(
+    race: schedule.Race,
+    results: list[form.QualifyingResult],
+    driver_ids: Sequence[str],
+    team_ids: Sequence[str],
+) -> dict:
+    document = after_qualifying.collect(race, results, _now(), driver_ids, team_ids)
+    _warn_missing(document)
+    return document
+
+
+def _qualifying_text(document: dict, model: str | None) -> str | None:
+    try:
+        return digest.generate_after_qualifying(
+            document,
+            digest.ClaudeCli(model=model, system_prompt=digest.QUALIFYING_SYSTEM_PROMPT),
+        )
+    except digest.GenerationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
 def _send_or_print(
     chunks: list[str] | None, credentials: telegram_send.Credentials | None, target: _Target
 ) -> int:
@@ -676,6 +773,22 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
                 credentials = _credentials(dry_run, env_file)
                 chunks = _digest_for(decision.race, model)
                 return _send_or_print(chunks, credentials, _round_target(log, decision.race))
+            quali = after_qualifying.decide(races, _now(), log)
+            if quali.under_way:
+                print(after_qualifying.describe(quali), file=sys.stderr)
+            if quali.due and quali.race is not None:
+                credentials = _credentials(dry_run, env_file)
+                # Nothing is claimed until the text is ready: while the classification is
+                # not published (or Jolpica fails) the next run tries again.
+                results = _classification(quali.race)
+                if not results:
+                    return 0 if results is not None else 1
+                document = _qualifying_document(
+                    quali.race, results, _favourite_drivers(), _favourite_teams()
+                )
+                text = _qualifying_text(document, model)
+                chunks = None if text is None else _messages(text)
+                return _send_or_print(chunks, credentials, _qualifying_target(log, quali.race))
             summary = _decide_summary(races, log)
             if summary is None:
                 return 1
@@ -735,11 +848,53 @@ def _cmd_summary(output: str | None, model: str | None, prompt_only: bool, state
     return 0
 
 
-def _cmd_forget(season: int | None, round_: int | None, month: str | None, state: str) -> int:
+def _cmd_quali(
+    season: str,
+    round_: int | None,
+    driver_ids: list[str] | None,
+    team_ids: list[str] | None,
+    output: str | None,
+    model: str | None,
+    prompt_only: bool,
+) -> int:
+    try:
+        races = schedule.fetch_schedule(season)
+    except schedule.ScheduleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if round_ is None:
+        race = schedule.next_race(races, _now())
+    else:
+        race = next((r for r in races if r.round == round_), None)
+    if race is None:
+        print(f"error: no such race in season {season}", file=sys.stderr)
+        return 1
+    results = _classification(race)
+    if not results:
+        return 1
+    document = _qualifying_document(
+        race, results, driver_ids or _favourite_drivers(), team_ids or _favourite_teams()
+    )
+    if prompt_only:
+        _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE), output)
+        return 0
+    text = _qualifying_text(document, model)
+    if text is None:
+        return 1
+    _write(text + "\n", output)
+    return 0
+
+
+def _cmd_forget(
+    season: int | None, round_: int | None, month: str | None, qualifying: bool, state: str
+) -> int:
     by_round = month is None and season is not None and round_ is not None
-    by_month = month is not None and season is None and round_ is None
+    by_month = month is not None and season is None and round_ is None and not qualifying
     if not (by_round or by_month):
-        print("error: give either --season and --round, or --month", file=sys.stderr)
+        print(
+            "error: give either --season and --round (and maybe --qualifying), or --month",
+            file=sys.stderr,
+        )
         return 2
     if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
         print("error: --month must look like 2027-01", file=sys.stderr)
@@ -750,7 +905,11 @@ def _cmd_forget(season: int | None, round_: int | None, month: str | None, state
                 removed, label = log.forget_summary(month), f"the {month} summary"
             else:
                 assert season is not None and round_ is not None
-                removed, label = log.forget(season, round_), f"round {round_} of {season}"
+                if qualifying:
+                    removed = log.forget_qualifying(season, round_)
+                    label = f"the message after qualifying for round {round_} of {season}"
+                else:
+                    removed, label = log.forget(season, round_), f"round {round_} of {season}"
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -785,6 +944,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
     if args.command == "summary":
         return _cmd_summary(args.output, args.model, args.prompt_only, args.state)
+    if args.command == "quali":
+        return _cmd_quali(
+            args.season,
+            args.round,
+            args.driver_ids,
+            args.team_ids,
+            args.output,
+            args.model,
+            args.prompt_only,
+        )
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
     if args.command == "send":
@@ -794,5 +963,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         return _cmd_run(args.days_before, args.state, args.dry_run, args.model, args.env_file)
     if args.command == "forget":
-        return _cmd_forget(args.season, args.round, args.month, args.state)
+        return _cmd_forget(args.season, args.round, args.month, args.qualifying, args.state)
     return 0
