@@ -1,6 +1,7 @@
 """Command-line entry point."""
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -8,6 +9,7 @@ from datetime import UTC, datetime
 from f1brief import (
     __version__,
     drivers,
+    facts,
     form,
     news,
     pace,
@@ -77,6 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
     news_cmd.add_argument("--days", type=int, default=7, help="how far back (default: 7)")
 
     commands.add_parser("weather", help="show the weather forecast for the next race weekend")
+
+    facts_cmd = commands.add_parser(
+        "facts", help="collect every fact for the next race weekend as JSON with sources"
+    )
+    facts_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
     return parser
 
 
@@ -199,6 +206,24 @@ def _cmd_weather() -> int:
     return 0
 
 
+def _cmd_facts(output: str | None) -> int:
+    document = facts.collect(_now())
+    collected = [name for name, data in document["sections"].items() if data is not None]
+    if not collected:
+        for gap in document["missing"]:
+            print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
+        return 1
+    text = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    if output:
+        with open(output, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    else:
+        sys.stdout.write(text)
+    for gap in document["missing"]:
+        print(f"warning: no {gap['section']} facts: {gap['reason']}", file=sys.stderr)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -217,4 +242,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_news(args.days)
     if args.command == "weather":
         return _cmd_weather()
+    if args.command == "facts":
+        return _cmd_facts(args.output)
     return 0

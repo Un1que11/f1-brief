@@ -16,7 +16,7 @@
 - [x] F11. Weather forecast at the track for the weekend's days (Open-Meteo).
 
 ## Phase 3 — digest
-- [ ] F12. Assemble all facts into one JSON with sources.
+- [x] F12. Assemble all facts into one JSON with sources.
 - [ ] F13. Text generation via `claude -p` from a prompt template; a test that the prompt contains only facts from the JSON.
 - [ ] F14. Telegram formatting (MarkdownV2, escaping, splitting at the message length limit).
 - [ ] F15. Sending via the Bot API + a `--dry-run` mode (print to the console).
