@@ -31,6 +31,8 @@ uv run f1brief facts --output facts.json   # every fact above as one JSON, with 
 uv run f1brief digest                      # the Russian digest text, written by `claude -p`
 uv run f1brief digest --facts facts.json --prompt-only   # the exact prompt, without claude
 uv run f1brief format --input digest.txt   # the digest as Telegram MarkdownV2 messages
+uv run f1brief send --input digest.txt --dry-run   # what would be sent, without sending
+uv run f1brief send --input digest.txt     # send the digest to the Telegram chat
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -47,6 +49,13 @@ document instead of collecting again.
 every special character escaped and the section headings in bold, split at paragraph, line or
 word boundaries so that no message is longer than 4096 characters (`--limit` to try a smaller
 one). It reads stdin by default, so `f1brief digest | f1brief format` works too.
+
+`send` formats a digest text the same way and sends each message to the chat through the
+Telegram Bot API, in order, stopping at the first one Telegram refuses. It needs the bot token
+and the chat id: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the environment, or copy
+`.env.example` to `.env` (git-ignored) and fill it in; `--env-file` points somewhere else.
+`--dry-run` prints the messages instead and needs neither. The token is never printed: it is
+redacted from every error.
 
 `python -m f1brief` works too, from inside the virtual environment.
 

@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -74,3 +75,14 @@ def no_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError(f"tests must not run subprocesses: {args[0] if args else kwargs}")
 
     monkeypatch.setattr(subprocess, "run", blocked)
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never reach a real server (above all, never the Telegram Bot API): only
+    `httpx.MockTransport` answers."""
+
+    def blocked(self: Any, request: Any) -> None:
+        raise AssertionError(f"tests must not use the network: {request.method} {request.url.host}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked)
