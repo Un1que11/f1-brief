@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from f1brief import (
     __version__,
+    digest,
     drivers,
     facts,
     form,
@@ -84,6 +85,18 @@ def build_parser() -> argparse.ArgumentParser:
         "facts", help="collect every fact for the next race weekend as JSON with sources"
     )
     facts_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
+
+    digest_cmd = commands.add_parser(
+        "digest", help="write the digest text from the facts with headless Claude Code"
+    )
+    digest_cmd.add_argument(
+        "--facts", metavar="PATH", help="a saved `facts` document (default: collect now)"
+    )
+    digest_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
+    digest_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    digest_cmd.add_argument(
+        "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
     return parser
 
 
@@ -206,21 +219,65 @@ def _cmd_weather() -> int:
     return 0
 
 
-def _cmd_facts(output: str | None) -> int:
+def _collect_facts() -> dict | None:
+    """The facts document, or None (after printing why) when no section could be collected."""
     document = facts.collect(_now())
-    collected = [name for name, data in document["sections"].items() if data is not None]
-    if not collected:
+    if not any(data is not None for data in document["sections"].values()):
         for gap in document["missing"]:
             print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
-        return 1
-    text = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+        return None
+    return document
+
+
+def _warn_missing(document: dict) -> None:
+    for gap in document["missing"]:
+        print(f"warning: no {gap['section']} facts: {gap['reason']}", file=sys.stderr)
+
+
+def _write(text: str, output: str | None) -> None:
     if output:
         with open(output, "w", encoding="utf-8") as fh:
             fh.write(text)
     else:
         sys.stdout.write(text)
-    for gap in document["missing"]:
-        print(f"warning: no {gap['section']} facts: {gap['reason']}", file=sys.stderr)
+
+
+def _cmd_facts(output: str | None) -> int:
+    document = _collect_facts()
+    if document is None:
+        return 1
+    _write(json.dumps(document, ensure_ascii=False, indent=2) + "\n", output)
+    _warn_missing(document)
+    return 0
+
+
+def _cmd_digest(
+    facts_path: str | None, output: str | None, model: str | None, prompt_only: bool
+) -> int:
+    if facts_path:
+        try:
+            with open(facts_path, encoding="utf-8") as fh:
+                document = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"error: cannot read {facts_path}: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(document, dict) or not {"sections", "missing"} <= document.keys():
+            print(f"error: {facts_path} is not a `facts` document", file=sys.stderr)
+            return 1
+    else:
+        document = _collect_facts()
+        if document is None:
+            return 1
+    if prompt_only:
+        _write(digest.build_prompt(document), output)
+        return 0
+    _warn_missing(document)
+    try:
+        text = digest.generate(document, digest.ClaudeCli(model=model))
+    except digest.GenerationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _write(text + "\n", output)
     return 0
 
 
@@ -244,4 +301,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_weather()
     if args.command == "facts":
         return _cmd_facts(args.output)
+    if args.command == "digest":
+        return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
     return 0
