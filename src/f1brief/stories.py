@@ -5,7 +5,8 @@ The tables follow "Hot stories" in CLAUDE.md: `stories`, `story_entities`, `stor
 `subscriptions`. Every update carries the URL of the article it came from, and a story is
 created together with its first update, so there is no story and no update without a source.
 A story's status changes only together with an update (`add_update(..., status=...)`).
-Unfollowing keeps the story and its timeline.
+Unfollowing keeps the story and its timeline. `checked_news` lists the news links story
+detection (F22) has already looked at, so each article is judged once.
 
 The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
 how many it has had in `schema_versions` (one row per part of the state file that migrates,
@@ -15,7 +16,7 @@ so other tables may get their own later). A file migrated by a newer version is 
 import re
 import sqlite3
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -72,6 +73,12 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
             followed_at TEXT NOT NULL,
             unfollowed_at TEXT,
             muted_until TEXT
+        )""",
+    ),
+    (
+        """CREATE TABLE checked_news (
+            url TEXT NOT NULL PRIMARY KEY,
+            checked_at TEXT NOT NULL
         )""",
     ),
 )
@@ -186,6 +193,20 @@ def _check_entity(entity: Entity) -> None:
     _check_text("entity ref", entity.ref)
 
 
+def check_story(
+    slug: str, title_ru: str, summary_ru: str, status: StoryStatus, entities: Sequence[Entity]
+) -> None:
+    """Raises ValueError for a new story that cannot be stored: a slug that is not lowercase
+    words joined by '-', an empty title or summary, an unknown status or entity kind."""
+    if not _SLUG.fullmatch(slug):
+        raise ValueError(f"a slug is lowercase words joined by '-', not {slug!r}")
+    _check_text("title_ru", title_ru)
+    _check_text("summary_ru", summary_ru)
+    StoryStatus(status)
+    for entity in entities:
+        _check_entity(entity)
+
+
 _STORY_COLUMNS = "id, slug, title_ru, summary_ru, status, created_at, last_update_at"
 _UPDATE_COLUMNS = "id, story_id, headline, url, source, what_changed_ru, published_at, recorded_at"
 
@@ -258,6 +279,10 @@ class StoryStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
+        if self._db.in_transaction:
+            # Part of a larger one (`transaction`), which commits or rolls back as a whole.
+            yield
+            return
         self._execute("BEGIN IMMEDIATE")
         try:
             yield
@@ -265,6 +290,10 @@ class StoryStore:
             self._db.rollback()
             raise
         self._execute("COMMIT")
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """Groups several operations: all of them are stored, or none (on an exception)."""
+        return self._transaction()
 
     def close(self) -> None:
         self._db.close()
@@ -306,13 +335,8 @@ class StoryStore:
     ) -> Story:
         """Stores a new story with its entities and the update it came from. Raises
         StoryError when the slug is taken, ValueError for invalid fields."""
-        if not _SLUG.fullmatch(slug):
-            raise ValueError(f"a slug is lowercase words joined by '-', not {slug!r}")
-        _check_text("title_ru", title_ru)
-        _check_text("summary_ru", summary_ru)
+        check_story(slug, title_ru, summary_ru, status, entities)
         status = StoryStatus(status)
-        for entity in entities:
-            _check_entity(entity)
         check_update(first_update)
         recorded = _stamp(now)
         last = _stamp(first_update.published_at) if first_update.published_at else recorded
@@ -486,3 +510,26 @@ class StoryStore:
             "WHERE sub.active = 1 ORDER BY s.last_update_at DESC, s.id DESC"
         )
         return [_story(row) for row in rows]
+
+    # --- news already checked by story detection -------------------------------------------
+
+    def unchecked(self, urls: Sequence[str]) -> list[str]:
+        """The URLs of `urls` that story detection has not checked yet, in the same order."""
+        if not urls:
+            return []
+        checked = {
+            url
+            for (url,) in self._execute(
+                f"SELECT url FROM checked_news WHERE url IN ({', '.join('?' * len(urls))})",
+                tuple(urls),
+            )
+        }
+        return [url for url in urls if url not in checked]
+
+    def mark_checked(self, urls: Sequence[str], now: datetime) -> None:
+        checked_at = _stamp(now)
+        with self._transaction():
+            self._execute_many(
+                "INSERT OR IGNORE INTO checked_news (url, checked_at) VALUES (?, ?)",
+                [(url, checked_at) for url in urls],
+            )
