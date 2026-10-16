@@ -4,9 +4,21 @@
 About 2 days before the first practice session, send Misha a short digest in Russian via Telegram: what has changed since the last race, overall and for his favourites, and what to expect this weekend. Runs locally on a MacBook.
 
 ## Favourites (in `config.toml`)
-- Team: McLaren
-- Drivers: George Russell, Esteban Ocon
+- Teams: McLaren, Haas
+- Drivers: George Russell, Esteban Ocon, Oliver Bearman
 - For Ocon, also track news about his future in F1 (contract, moves).
+- Favourites are a list in config, never hardcoded: any number of teams and drivers. Every collector (form, teammate comparison, track history, pace, news) iterates over them.
+
+## Hot stories (subscribable storylines)
+A **story** is a developing storyline that spans weeks or months, e.g. "Bearman may replace Hamilton at Ferrari in 2028, so his 2027 teammate battle matters". Stories are kept in an archive and Misha can follow or unfollow each one.
+- **Model (SQLite):** `stories` (id, slug, title_ru, summary_ru, status `rumor | developing | confirmed | denied | resolved`, created_at, last_update_at), `story_entities` (story_id, kind `driver | team | person`, ref — Jolpica id where one exists), `story_updates` (story_id, published_at, headline, url, source, what_changed_ru), `subscriptions` (story_id, active, followed_at, unfollowed_at, muted_until).
+- **Detection:** hot items are news about favourites or followed entities that touch contracts, seats, transfers, team principals, regulations or penalties. Each run, `claude -p` gets only the new items plus the list of existing stories and returns JSON: attach the item to a story, propose a new story, or ignore. Every story and every update must carry the source URL of the article it came from; no update without a source. Rumours are labelled as rumours.
+- **Following a story** subscribes to that story only. The bot then *offers* (buttons, never automatic) to also follow its key entities, e.g. Bearman and Haas, which adds them to the favourites.
+- **Unfollowing must be one tap:** every story message carries an inline "Отписаться" button; `/unfollow <id>` and `/mute <id> <days>` also work. Unfollowing keeps the story in the archive.
+- **Bot commands (Russian UI):** `/stories` (followed and recent), `/story <id>` (timeline with sources), `/follow <id>`, `/unfollow <id>`, `/mute <id> <days>`, `/archive` (all, including resolved).
+- **Alerts:** a new update on a followed story sends a short message right away, with at most 3 alerts a day and quiet hours 23:00–08:00 Warsaw (queued until morning).
+- **Digest:** a section "Твои сюжеты" covers each followed story: what changed since the last digest and why it matters this weekend (e.g. Bearman vs his teammate in qualifying and race this season).
+- **Lifecycle:** a story whose outcome is officially announced becomes `confirmed`/`denied`, then `resolved`. A followed story with no update for 60 days triggers one message offering to unfollow.
 
 ## Stack
 - Python 3.12+, uv, ruff, pytest
@@ -18,11 +30,12 @@ About 2 days before the first practice session, send Misha a short digest in Rus
 ## Digest structure
 1. Round, track, session schedule in Warsaw time
 2. What has changed since the last race: standings, penalties, regulations, upgrades
-3. McLaren: form over the last 3–5 races, pace, qualifying, upgrades
-4. Russell and Ocon: results, comparison with their teammate, news
-5. The track: its character, the favourites' past results there
-6. Weather
-7. "What to expect": 3–5 points, each explaining what the prediction is based on
+3. Favourite teams (McLaren, Haas): form over the last 3–5 races, pace, qualifying, upgrades
+4. Favourite drivers (Russell, Ocon, Bearman): results, comparison with their teammate, news
+5. "Твои сюжеты": updates on followed stories since the last digest and why they matter this weekend
+6. The track: its character, the favourites' past results there
+7. Weather
+8. "What to expect": 3–5 points, each explaining what the prediction is based on
 
 ## Rules for autonomous work
 1. Each session takes **one** task: the first open one in `BACKLOG.md`.
