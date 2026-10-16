@@ -49,5 +49,6 @@ Seven numbered sections in this order, each with a short Russian heading:
 ## Output
 
 Only the digest itself: no preface, no closing remarks, no comments on these rules. Plain text
-without Markdown markup or tables (formatting for Telegram is applied later). Keep it short:
-a reader should get through it in a few minutes.
+without Markdown markup or tables (formatting for Telegram is applied later). Start each
+section with its heading on a line of its own: the section number, a dot and the heading
+(`1. ...`), with no source. Keep it short: a reader should get through it in a few minutes.
