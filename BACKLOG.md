@@ -26,3 +26,7 @@
 - [ ] F17. [light] launchd plist + installation instructions.
 - [ ] F18. Off-season: instead of digests, a short monthly summary (driver moves, testing, favourites' news).
 - [ ] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.
+
+## Ideas (proposed by night job)
+- Circuit facts as a cited section of the facts JSON (length, laps, corners, DRS zones, from a checked-in file with its source). Reason: digest section 5 asks for the track's character, but the JSON has nothing on it, so the generator can only say it is unknown.
+- After generation, check that every digest point cites a source name that appears in the facts JSON, and refuse to send a digest that fails. Reason: the prompt requires sources (F13), but nothing verifies that the model followed it.
