@@ -146,6 +146,42 @@ def test_a_refused_message_stops_the_rest() -> None:
     assert recorder.texts() == ["a", "b"]
 
 
+def test_errors_count_the_delivered_messages() -> None:
+    recorder = Recorder(httpx.Response(200, json=OK), httpx.Response(400, json=PARSE_ERROR))
+    with pytest.raises(ts.SendError) as exc:
+        sender(recorder).send(["a", "b", "c"])
+    assert (exc.value.sent, exc.value.uncertain, exc.value.nothing_delivered) == (1, False, False)
+
+
+def raising(error: Exception) -> Callable[[], httpx.Response]:
+    def fail() -> httpx.Response:
+        raise error
+
+    return fail
+
+
+@pytest.mark.parametrize(
+    ("answer", "uncertain"),
+    [
+        (httpx.Response(400, json=PARSE_ERROR), False),
+        (raising(httpx.ConnectError("no route")), False),
+        (raising(httpx.ConnectTimeout("connect timed out")), False),
+        # The request went out; Telegram may have delivered the message before the failure.
+        (raising(httpx.ReadTimeout("read timed out")), True),
+        (raising(httpx.RemoteProtocolError("server disconnected")), True),
+        (httpx.Response(200, text="not json"), True),
+    ],
+)
+def test_errors_say_whether_the_failed_message_may_be_in_the_chat(
+    answer: httpx.Response | Callable[[], httpx.Response], uncertain: bool
+) -> None:
+    with pytest.raises(ts.SendError) as exc:
+        sender(Recorder(answer)).send(["a"])
+    assert exc.value.sent == 0
+    assert exc.value.uncertain is uncertain
+    assert exc.value.nothing_delivered is not uncertain
+
+
 def test_waits_and_retries_when_rate_limited() -> None:
     recorder, sleeps = Recorder(too_many(3), httpx.Response(200, json=OK)), []
     sender(recorder, sleeps).send(["a"])

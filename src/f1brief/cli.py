@@ -17,6 +17,8 @@ from f1brief import (
     news,
     pace,
     schedule,
+    send_log,
+    send_window,
     standings,
     telegram_format,
     telegram_send,
@@ -131,6 +133,56 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"where to look for {telegram_send.TOKEN_VAR} and {telegram_send.CHAT_ID_VAR} "
         f"when they are not in the environment (default: {telegram_send.DEFAULT_ENV_FILE})",
     )
+
+    def add_state(cmd: argparse.ArgumentParser) -> None:
+        cmd.add_argument(
+            "--state",
+            default=send_log.DEFAULT_STATE_FILE,
+            metavar="PATH",
+            help=f"SQLite file of sent rounds (default: {send_log.DEFAULT_STATE_FILE})",
+        )
+
+    def add_days_before(cmd: argparse.ArgumentParser) -> None:
+        cmd.add_argument(
+            "--days-before",
+            type=int,
+            default=send_window.DEFAULT_DAYS_BEFORE,
+            metavar="N",
+            help="open the send window N days before FP1, Warsaw time "
+            f"(default: {send_window.DEFAULT_DAYS_BEFORE})",
+        )
+
+    due_cmd = commands.add_parser(
+        "due", help="show whether it is time to send the digest for the next round"
+    )
+    add_days_before(due_cmd)
+    add_state(due_cmd)
+
+    run_cmd = commands.add_parser(
+        "run",
+        help="the daily job: when the digest is due, write it and send it, once per round",
+    )
+    add_days_before(run_cmd)
+    add_state(run_cmd)
+    run_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the messages instead of sending them; records nothing, needs no token",
+    )
+    run_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    run_cmd.add_argument(
+        "--env-file",
+        default=telegram_send.DEFAULT_ENV_FILE,
+        metavar="PATH",
+        help=f"where to look for the Telegram settings (default: {telegram_send.DEFAULT_ENV_FILE})",
+    )
+
+    forget_cmd = commands.add_parser(
+        "forget", help="drop a round from the state file, so that `run` may send it again"
+    )
+    forget_cmd.add_argument("--season", type=int, required=True)
+    forget_cmd.add_argument("--round", type=int, required=True)
+    add_state(forget_cmd)
     return parser
 
 
@@ -382,6 +434,134 @@ def _cmd_send(input_path: str | None, dry_run: bool, env_file: str) -> int:
     return 0
 
 
+def _decide(days_before: int, log: send_log.SendLog) -> send_window.Decision | None:
+    """Today's decision, or None (after printing why) when the calendar is unavailable."""
+    try:
+        races = schedule.fetch_schedule()
+    except schedule.ScheduleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    return send_window.decide(races, _now(), log, days_before)
+
+
+def _cmd_due(days_before: int, state: str) -> int:
+    if days_before < 0:
+        print("error: --days-before must not be negative", file=sys.stderr)
+        return 2
+    try:
+        with send_log.SendLog(state) as log:
+            decision = _decide(days_before, log)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if decision is None:
+        return 1
+    print(send_window.describe(decision))
+    return 0
+
+
+def _digest_for(race: schedule.Race, model: str | None) -> list[str] | None:
+    """The digest messages for `race`, or None (after printing why) when they cannot be made."""
+    document = _collect_facts()
+    if document is None:
+        return None
+    about = document["sections"]["race"]
+    if about is None or (about["season"], about["round"]) != (race.season, race.round):
+        print(
+            f"error: the facts are not about round {race.round} of {race.season}", file=sys.stderr
+        )
+        return None
+    _warn_missing(document)
+    try:
+        text = digest.generate(document, digest.ClaudeCli(model=model))
+    except digest.GenerationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    return _messages(text)
+
+
+def _deliver(
+    log: send_log.SendLog,
+    race: schedule.Race,
+    chunks: list[str],
+    credentials: telegram_send.Credentials,
+) -> int:
+    season, round_ = race.season, race.round
+    # Claimed right before sending: of two runs at once, only one gets past this.
+    if not log.claim(season, round_, _now()):
+        print(f"round {round_} of {season} is already sent or being sent", file=sys.stderr)
+        return 0
+    try:
+        with _telegram_client() as client:
+            telegram_send.send(chunks, credentials, client)
+    except telegram_send.SendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        if exc.nothing_delivered:
+            log.release(season, round_)
+            print("nothing was delivered; the next run will try again", file=sys.stderr)
+        else:
+            log.mark_partial(season, round_, _now(), exc.sent)
+            print(
+                "part of the digest may be in the chat, so it is not resent automatically; "
+                f"check the chat, then `f1brief forget --season {season} --round {round_}` "
+                "to allow another send",
+                file=sys.stderr,
+            )
+        return 1
+    log.mark_sent(season, round_, _now(), len(chunks))
+    print(f"sent {len(chunks)} message(s) for round {round_} of {season}", file=sys.stderr)
+    return 0
+
+
+def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env_file: str) -> int:
+    if days_before < 0:
+        print("error: --days-before must not be negative", file=sys.stderr)
+        return 2
+    try:
+        with send_log.SendLog(state) as log:
+            decision = _decide(days_before, log)
+            if decision is None:
+                return 1
+            print(send_window.describe(decision), file=sys.stderr)
+            if not decision.due or decision.race is None:
+                return 0
+            credentials = None
+            if not dry_run:
+                # Before the digest is written, so missing settings cost no claude run.
+                try:
+                    credentials = telegram_send.load_credentials(env_file=env_file)
+                except telegram_send.SendError as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    return 1
+            chunks = _digest_for(decision.race, model)
+            if chunks is None:
+                return 1
+            if credentials is None:
+                _print_messages(chunks)
+                print(
+                    f"dry run: {len(chunks)} message(s) not sent, nothing recorded", file=sys.stderr
+                )
+                return 0
+            return _deliver(log, decision.race, chunks, credentials)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _cmd_forget(season: int, round_: int, state: str) -> int:
+    try:
+        with send_log.SendLog(state) as log:
+            removed = log.forget(season, round_)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if removed:
+        print(f"forgot round {round_} of {season}")
+    else:
+        print(f"round {round_} of {season} was not in {state}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -408,4 +588,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_format(args.input, args.limit)
     if args.command == "send":
         return _cmd_send(args.input, args.dry_run, args.env_file)
+    if args.command == "due":
+        return _cmd_due(args.days_before, args.state)
+    if args.command == "run":
+        return _cmd_run(args.days_before, args.state, args.dry_run, args.model, args.env_file)
+    if args.command == "forget":
+        return _cmd_forget(args.season, args.round, args.state)
     return 0
