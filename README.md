@@ -105,6 +105,11 @@ penalties come only from the news. The prompt is `src/f1brief/qualifying_prompt.
 writes the message for any round without sending it (`--round`, `--season`; `--driver` and
 `--team` to try other favourites; `--prompt-only` for the prompt).
 
+Hot stories (storylines Misha can follow, see CLAUDE.md) are kept in `state.db` too, in the
+tables of `src/f1brief/stories.py`: each story with the drivers, teams and people it is about,
+its timeline of updates (every one with the URL of its source) and whether it is followed or
+muted. Nothing fills them yet; detection, the bot and alerts come next (F22–F24).
+
 `python -m f1brief` works too, from inside the virtual environment.
 
 ## Checks

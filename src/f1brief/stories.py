@@ -1,0 +1,488 @@
+"""Hot stories (F21): storylines that span weeks or months, kept in the state file (git-ignored,
+see `*.db`) next to the send log and the news archive.
+
+The tables follow "Hot stories" in CLAUDE.md: `stories`, `story_entities`, `story_updates` and
+`subscriptions`. Every update carries the URL of the article it came from, and a story is
+created together with its first update, so there is no story and no update without a source.
+A story's status changes only together with an update (`add_update(..., status=...)`).
+Unfollowing keeps the story and its timeline.
+
+The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
+how many it has had in `schema_versions` (one row per part of the state file that migrates,
+so other tables may get their own later). A file migrated by a newer version is refused.
+"""
+
+import re
+import sqlite3
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import Path
+from types import TracebackType
+from urllib.parse import urlsplit
+
+from f1brief.send_log import DEFAULT_STATE_FILE, StateError
+
+_COMPONENT = "stories"
+
+_VERSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_versions (
+    component TEXT NOT NULL PRIMARY KEY,
+    version INTEGER NOT NULL
+)
+"""
+
+# Each step is a list of statements run in one transaction; never edit a released step, add
+# a new one.
+_MIGRATIONS: tuple[tuple[str, ...], ...] = (
+    (
+        """CREATE TABLE stories (
+            id INTEGER PRIMARY KEY,
+            slug TEXT NOT NULL UNIQUE,
+            title_ru TEXT NOT NULL,
+            summary_ru TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (status IN ('rumor', 'developing', 'confirmed', 'denied', 'resolved')),
+            created_at TEXT NOT NULL,
+            last_update_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE story_entities (
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (kind IN ('driver', 'team', 'person')),
+            ref TEXT NOT NULL,
+            PRIMARY KEY (story_id, kind, ref)
+        )""",
+        """CREATE TABLE story_updates (
+            id INTEGER PRIMARY KEY,
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            published_at TEXT,  -- null: the article has no date
+            headline TEXT NOT NULL,
+            url TEXT NOT NULL CHECK (url LIKE 'http://%' OR url LIKE 'https://%'),
+            source TEXT NOT NULL,
+            what_changed_ru TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            UNIQUE (story_id, url)
+        )""",
+        "CREATE INDEX story_updates_recorded_at ON story_updates (recorded_at)",
+        """CREATE TABLE subscriptions (
+            story_id INTEGER NOT NULL PRIMARY KEY REFERENCES stories (id) ON DELETE CASCADE,
+            active INTEGER NOT NULL CHECK (active IN (0, 1)),
+            followed_at TEXT NOT NULL,
+            unfollowed_at TEXT,
+            muted_until TEXT
+        )""",
+    ),
+)
+
+SCHEMA_VERSION = len(_MIGRATIONS)
+
+_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+class StoryError(Exception):
+    """A story operation that does not fit the stored stories (unknown id, taken slug)."""
+
+
+class StoryStatus(StrEnum):
+    RUMOR = "rumor"
+    DEVELOPING = "developing"
+    CONFIRMED = "confirmed"
+    DENIED = "denied"
+    RESOLVED = "resolved"
+
+
+class EntityKind(StrEnum):
+    DRIVER = "driver"
+    TEAM = "team"
+    PERSON = "person"
+
+
+@dataclass(frozen=True)
+class Entity:
+    """Who a story is about. `ref` is the Jolpica id for drivers and teams ("bearman",
+    "haas"); for a person without one, a slug of their name ("fred_vasseur")."""
+
+    kind: EntityKind
+    ref: str
+
+
+@dataclass(frozen=True)
+class Update:
+    """One sourced development of a story, as it is added."""
+
+    headline: str
+    url: str
+    source: str  # the outlet, e.g. "BBC Sport"
+    what_changed_ru: str
+    published_at: datetime | None  # None: the article has no date
+
+
+@dataclass(frozen=True)
+class StoryUpdate:
+    """An update as stored: which story, and when it was recorded."""
+
+    id: int
+    story_id: int
+    update: Update
+    recorded_at: datetime
+
+
+@dataclass(frozen=True)
+class Story:
+    id: int
+    slug: str
+    title_ru: str
+    summary_ru: str
+    status: StoryStatus
+    created_at: datetime
+    # When the latest update was published (or recorded, for an undated article).
+    last_update_at: datetime
+
+
+@dataclass(frozen=True)
+class Subscription:
+    story_id: int
+    active: bool
+    followed_at: datetime
+    unfollowed_at: datetime | None
+    muted_until: datetime | None
+
+    def muted(self, now: datetime) -> bool:
+        return self.muted_until is not None and now < self.muted_until
+
+
+def _stamp(moment: datetime) -> str:
+    if moment.tzinfo is None:
+        raise ValueError("timestamps must be timezone-aware")
+    return moment.astimezone(UTC).isoformat()
+
+
+def _moment(text: str | None) -> datetime | None:
+    return datetime.fromisoformat(text) if text else None
+
+
+def _check_text(name: str, value: str) -> None:
+    if not value.strip():
+        raise ValueError(f"{name} must not be empty")
+
+
+def check_update(update: Update) -> None:
+    """Raises ValueError for an update that cannot be stored: no http(s) source URL, or an
+    empty headline, source or description."""
+    parts = urlsplit(update.url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ValueError(f"an update needs the http(s) URL of its source, not {update.url!r}")
+    _check_text("headline", update.headline)
+    _check_text("source", update.source)
+    _check_text("what_changed_ru", update.what_changed_ru)
+    if update.published_at is not None and update.published_at.tzinfo is None:
+        raise ValueError("timestamps must be timezone-aware")
+
+
+def _check_entity(entity: Entity) -> None:
+    EntityKind(entity.kind)
+    _check_text("entity ref", entity.ref)
+
+
+_STORY_COLUMNS = "id, slug, title_ru, summary_ru, status, created_at, last_update_at"
+_UPDATE_COLUMNS = "id, story_id, headline, url, source, what_changed_ru, published_at, recorded_at"
+
+
+def _story(row: tuple) -> Story:
+    id_, slug, title_ru, summary_ru, status, created_at, last_update_at = row
+    return Story(
+        id=id_,
+        slug=slug,
+        title_ru=title_ru,
+        summary_ru=summary_ru,
+        status=StoryStatus(status),
+        created_at=datetime.fromisoformat(created_at),
+        last_update_at=datetime.fromisoformat(last_update_at),
+    )
+
+
+def _story_update(row: tuple) -> StoryUpdate:
+    id_, story_id, headline, url, source, what_changed_ru, published_at, recorded_at = row
+    return StoryUpdate(
+        id=id_,
+        story_id=story_id,
+        update=Update(
+            headline=headline,
+            url=url,
+            source=source,
+            what_changed_ru=what_changed_ru,
+            published_at=_moment(published_at),
+        ),
+        recorded_at=datetime.fromisoformat(recorded_at),
+    )
+
+
+class StoryStore:
+    """The story tables of the state file at `path` (created on first use). Use as a
+    context manager."""
+
+    def __init__(self, path: str | Path = DEFAULT_STATE_FILE) -> None:
+        self.path = path
+        try:
+            # Autocommit; operations that write several rows use `_transaction`.
+            self._db = sqlite3.connect(path, timeout=10.0, isolation_level=None)
+            self._db.execute("PRAGMA foreign_keys = ON")
+            self._db.execute(_VERSIONS_TABLE)
+            self._migrate()
+        except sqlite3.Error as exc:
+            raise StateError(f"cannot open {path}: {exc}") from exc
+
+    def _migrate(self) -> None:
+        # IMMEDIATE takes the write lock before the version is read, so of two runs that
+        # open an old file at once only the first migrates it.
+        with self._transaction():
+            row = self._db.execute(
+                "SELECT version FROM schema_versions WHERE component = ?", (_COMPONENT,)
+            ).fetchone()
+            version = row[0] if row else 0
+            if version > SCHEMA_VERSION:
+                raise StateError(
+                    f"{self.path}: the stories schema is version {version}, newer than this "
+                    f"program's {SCHEMA_VERSION}"
+                )
+            for step in _MIGRATIONS[version:]:
+                for statement in step:
+                    self._db.execute(statement)
+            if version < SCHEMA_VERSION:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO schema_versions (component, version) VALUES (?, ?)",
+                    (_COMPONENT, SCHEMA_VERSION),
+                )
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        self._execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self._db.rollback()
+            raise
+        self._execute("COMMIT")
+
+    def close(self) -> None:
+        self._db.close()
+
+    def __enter__(self) -> "StoryStore":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def _execute(self, sql: str, params: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        try:
+            return self._db.execute(sql, params)
+        except sqlite3.Error as exc:
+            raise StateError(f"{self.path}: {exc}") from exc
+
+    def _require(self, story_id: int) -> Story:
+        story = self.get(story_id)
+        if story is None:
+            raise StoryError(f"no story {story_id}")
+        return story
+
+    # --- stories and their updates ---------------------------------------------------------
+
+    def create(
+        self,
+        slug: str,
+        title_ru: str,
+        summary_ru: str,
+        status: StoryStatus,
+        entities: Sequence[Entity],
+        first_update: Update,
+        now: datetime,
+    ) -> Story:
+        """Stores a new story with its entities and the update it came from. Raises
+        StoryError when the slug is taken, ValueError for invalid fields."""
+        if not _SLUG.fullmatch(slug):
+            raise ValueError(f"a slug is lowercase words joined by '-', not {slug!r}")
+        _check_text("title_ru", title_ru)
+        _check_text("summary_ru", summary_ru)
+        status = StoryStatus(status)
+        for entity in entities:
+            _check_entity(entity)
+        check_update(first_update)
+        recorded = _stamp(now)
+        last = _stamp(first_update.published_at) if first_update.published_at else recorded
+        with self._transaction():
+            if self.get_by_slug(slug) is not None:
+                raise StoryError(f"a story with the slug {slug!r} exists")
+            story_id = self._execute(
+                "INSERT INTO stories (slug, title_ru, summary_ru, status, created_at, "
+                "last_update_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (slug, title_ru, summary_ru, status.value, recorded, last),
+            ).lastrowid
+            assert story_id is not None
+            self._execute_many(
+                "INSERT OR IGNORE INTO story_entities (story_id, kind, ref) VALUES (?, ?, ?)",
+                [(story_id, EntityKind(e.kind).value, e.ref) for e in entities],
+            )
+            self._insert_update(story_id, first_update, recorded)
+        return self._require(story_id)
+
+    def _execute_many(self, sql: str, rows: list[tuple[object, ...]]) -> None:
+        try:
+            self._db.executemany(sql, rows)
+        except sqlite3.Error as exc:
+            raise StateError(f"{self.path}: {exc}") from exc
+
+    def _insert_update(self, story_id: int, update: Update, recorded: str) -> bool:
+        published = _stamp(update.published_at) if update.published_at else None
+        cursor = self._execute(
+            "INSERT OR IGNORE INTO story_updates (story_id, published_at, headline, url, "
+            "source, what_changed_ru, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                story_id,
+                published,
+                update.headline,
+                update.url,
+                update.source,
+                update.what_changed_ru,
+                recorded,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def add_update(
+        self,
+        story_id: int,
+        update: Update,
+        now: datetime,
+        status: StoryStatus | None = None,
+    ) -> bool:
+        """Attaches a sourced update to a story, and moves the story to `status` if given.
+        False (and nothing changed) when the story already has an update from that URL.
+        Raises StoryError for an unknown story."""
+        check_update(update)
+        recorded = _stamp(now)
+        moment = _stamp(update.published_at) if update.published_at else recorded
+        with self._transaction():
+            self._require(story_id)
+            if not self._insert_update(story_id, update, recorded):
+                return False
+            self._execute(
+                "UPDATE stories SET last_update_at = MAX(last_update_at, ?), "
+                "status = COALESCE(?, status) WHERE id = ?",
+                (moment, StoryStatus(status).value if status else None, story_id),
+            )
+        return True
+
+    def get(self, story_id: int) -> Story | None:
+        row = self._execute(
+            f"SELECT {_STORY_COLUMNS} FROM stories WHERE id = ?", (story_id,)
+        ).fetchone()
+        return _story(row) if row else None
+
+    def get_by_slug(self, slug: str) -> Story | None:
+        row = self._execute(
+            f"SELECT {_STORY_COLUMNS} FROM stories WHERE slug = ?", (slug,)
+        ).fetchone()
+        return _story(row) if row else None
+
+    def stories(self, statuses: Sequence[StoryStatus] | None = None) -> list[Story]:
+        """All stories (or those in `statuses`), the most recently updated first."""
+        sql = f"SELECT {_STORY_COLUMNS} FROM stories"
+        params: tuple[object, ...] = ()
+        if statuses is not None:
+            sql += f" WHERE status IN ({', '.join('?' * len(statuses))})"
+            params = tuple(StoryStatus(s).value for s in statuses)
+        rows = self._execute(f"{sql} ORDER BY last_update_at DESC, id DESC", params)
+        return [_story(row) for row in rows]
+
+    def entities(self, story_id: int) -> list[Entity]:
+        rows = self._execute(
+            "SELECT kind, ref FROM story_entities WHERE story_id = ? ORDER BY kind, ref",
+            (story_id,),
+        )
+        return [Entity(EntityKind(kind), ref) for kind, ref in rows]
+
+    def timeline(self, story_id: int) -> list[StoryUpdate]:
+        """The story's updates, oldest first (an undated one by when it was recorded)."""
+        rows = self._execute(
+            f"SELECT {_UPDATE_COLUMNS} FROM story_updates WHERE story_id = ? "
+            "ORDER BY COALESCE(published_at, recorded_at), id",
+            (story_id,),
+        )
+        return [_story_update(row) for row in rows]
+
+    def updates_since(self, moment: datetime, followed_only: bool = False) -> list[StoryUpdate]:
+        """Updates recorded at or after `moment`, oldest first; with `followed_only`, only
+        those of stories followed now."""
+        sql = f"SELECT {_UPDATE_COLUMNS} FROM story_updates WHERE recorded_at >= ?"
+        if followed_only:
+            sql += " AND story_id IN (SELECT story_id FROM subscriptions WHERE active = 1)"
+        rows = self._execute(f"{sql} ORDER BY recorded_at, id", (_stamp(moment),))
+        return [_story_update(row) for row in rows]
+
+    # --- subscriptions ---------------------------------------------------------------------
+
+    def subscription(self, story_id: int) -> Subscription | None:
+        row = self._execute(
+            "SELECT active, followed_at, unfollowed_at, muted_until FROM subscriptions "
+            "WHERE story_id = ?",
+            (story_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        active, followed_at, unfollowed_at, muted_until = row
+        return Subscription(
+            story_id=story_id,
+            active=bool(active),
+            followed_at=datetime.fromisoformat(followed_at),
+            unfollowed_at=_moment(unfollowed_at),
+            muted_until=_moment(muted_until),
+        )
+
+    def follow(self, story_id: int, now: datetime) -> bool:
+        """Follows the story; False when it was followed already (nothing changes then).
+        Following again after unfollowing starts afresh, without a mute."""
+        followed = _stamp(now)
+        with self._transaction():
+            self._require(story_id)
+            cursor = self._execute(
+                "INSERT INTO subscriptions (story_id, active, followed_at) VALUES (?, 1, ?) "
+                "ON CONFLICT (story_id) DO UPDATE SET active = 1, "
+                "followed_at = excluded.followed_at, unfollowed_at = NULL, muted_until = NULL "
+                "WHERE active = 0",
+                (story_id, followed),
+            )
+        return cursor.rowcount == 1
+
+    def unfollow(self, story_id: int, now: datetime) -> bool:
+        """Stops following the story, which stays in the archive; False when it was not
+        followed."""
+        cursor = self._execute(
+            "UPDATE subscriptions SET active = 0, unfollowed_at = ?, muted_until = NULL "
+            "WHERE story_id = ? AND active = 1",
+            (_stamp(now), story_id),
+        )
+        return cursor.rowcount == 1
+
+    def mute(self, story_id: int, until: datetime) -> bool:
+        """Mutes a followed story until `until`; False when it is not followed."""
+        cursor = self._execute(
+            "UPDATE subscriptions SET muted_until = ? WHERE story_id = ? AND active = 1",
+            (_stamp(until), story_id),
+        )
+        return cursor.rowcount == 1
+
+    def followed(self) -> list[Story]:
+        """The stories followed now (muted ones included), the most recently updated first."""
+        rows = self._execute(
+            f"SELECT {', '.join('s.' + c for c in _STORY_COLUMNS.split(', '))} "
+            "FROM stories s JOIN subscriptions sub ON sub.story_id = s.id "
+            "WHERE sub.active = 1 ORDER BY s.last_update_at DESC, s.id DESC"
+        )
+        return [_story(row) for row in rows]
