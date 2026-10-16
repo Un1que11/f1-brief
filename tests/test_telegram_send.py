@@ -170,6 +170,10 @@ def raising(error: Exception) -> Callable[[], httpx.Response]:
         (raising(httpx.ReadTimeout("read timed out")), True),
         (raising(httpx.RemoteProtocolError("server disconnected")), True),
         (httpx.Response(200, text="not json"), True),
+        # A gateway or server error may come after the message was accepted.
+        (httpx.Response(502, text="<html>Bad Gateway</html>"), True),
+        (httpx.Response(500, json={"ok": False, "description": "Internal Server Error"}), True),
+        (httpx.Response(401, json={"ok": False, "description": "Unauthorized"}), False),
     ],
 )
 def test_errors_say_whether_the_failed_message_may_be_in_the_chat(

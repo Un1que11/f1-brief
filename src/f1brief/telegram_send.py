@@ -34,8 +34,9 @@ class SendError(Exception):
     """The digest could not be sent (or the Telegram settings are missing).
 
     `sent` is how many messages Telegram confirmed before the failure. `uncertain` is True
-    when the failed request may have reached Telegram anyway (it timed out or the connection
-    broke after it was sent), so that message may be in the chat too.
+    when the failed request may have reached Telegram anyway (it timed out, the connection
+    broke after it was sent, or Telegram answered with a server error), so that message may
+    be in the chat too.
     """
 
     def __init__(self, message: str, *, sent: int = 0, uncertain: bool = False) -> None:
@@ -159,7 +160,12 @@ class Sender:
             ):
                 self.sleep(retry_after)
                 continue
-            raise SendError(f"Telegram refused the message: {description}")
+            # A 5xx (often a gateway error) can come after Telegram has already accepted the
+            # message; only a 4xx is a sure refusal.
+            raise SendError(
+                f"Telegram refused the message: {description}",
+                uncertain=response.status_code >= 500,
+            )
 
     def send(self, messages: Sequence[str]) -> None:
         if not messages:
