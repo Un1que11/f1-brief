@@ -37,6 +37,9 @@ uv run f1brief due                         # is it time to send the next round's
 uv run f1brief run --dry-run               # the daily job, printing instead of sending
 uv run f1brief run                         # the daily job: when due, write and send, once
 uv run f1brief forget --season 2026 --round 18   # allow `run` to send that round again
+uv run f1brief summary --prompt-only       # the off-season monthly summary's prompt, today
+uv run f1brief summary                     # the monthly summary text (never sent)
+uv run f1brief forget --month 2027-01      # allow `run` to send that month's summary again
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -76,6 +79,17 @@ after the first message, a timeout, a crash), the round is never resent automati
 the chat, then `forget` the round to allow another send. A round whose FP1 has started without
 a digest is skipped. `run --dry-run` prints the messages instead and records nothing (it does
 run `claude -p`).
+
+In the off-season (before the Warsaw date of the year's first FP1, or after its last race)
+`run` sends a short monthly summary instead: driver moves, testing and launches, news about
+the favourites, and when the next season starts. It goes out on the first run in the first
+7 days of a month, unless a race weekend starts within 14 days or the season ended less than
+14 days ago, and once per month like a round's digest (`forget --month` allows another send).
+It covers the news since the first day of the previous month. RSS feeds only carry their
+latest items, so every off-season run also keeps the relevant news it fetched in `state.db`,
+and the summary reads it back. The prompt is `src/f1brief/summary_prompt.md`, with the same
+rules as the digest's. `summary` writes one on any day without sending it (`--prompt-only`
+for the prompt); it reads the archive but adds nothing to it.
 
 `python -m f1brief` works too, from inside the virtual environment.
 

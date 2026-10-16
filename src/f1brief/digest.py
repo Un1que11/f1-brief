@@ -1,9 +1,9 @@
 """The digest text, written by headless Claude Code (`claude -p`) from the facts document alone.
 
-The prompt is a fixed template (`digest_prompt.md`) with the facts JSON (F12) inserted, and
-nothing else: no names, results or dates live in the template. Claude runs without tools, MCP
-servers or user settings, from an empty directory, so it cannot read or fetch anything besides
-the prompt either.
+The prompt is a fixed template (`digest_prompt.md`, or `summary_prompt.md` for the off-season
+monthly summary) with the facts JSON (F12, F18) inserted, and nothing else: no names, results
+or dates live in the template. Claude runs without tools, MCP servers or user settings, from an
+empty directory, so it cannot read or fetch anything besides the prompt either.
 """
 
 import json
@@ -15,11 +15,17 @@ from importlib import resources
 from typing import Any, Protocol
 
 FACTS_MARKER = "{{FACTS_JSON}}"
+DIGEST_TEMPLATE = "digest_prompt.md"
+SUMMARY_TEMPLATE = "summary_prompt.md"
 TIMEOUT_S = 600.0
 
 # Replaces Claude Code's default (coding agent) system prompt. Fact-free, like the template.
 SYSTEM_PROMPT = (
     "You write a pre-race-weekend F1 digest strictly from the facts document in the "
+    "user's message. You have no tools and use no other knowledge."
+)
+SUMMARY_SYSTEM_PROMPT = (
+    "You write a monthly off-season F1 summary strictly from the facts document in the "
     "user's message. You have no tools and use no other knowledge."
 )
 
@@ -28,8 +34,8 @@ class GenerationError(Exception):
     """The digest text could not be generated."""
 
 
-def template() -> str:
-    return resources.files("f1brief").joinpath("digest_prompt.md").read_text(encoding="utf-8")
+def template(name: str = DIGEST_TEMPLATE) -> str:
+    return resources.files("f1brief").joinpath(name).read_text(encoding="utf-8")
 
 
 def facts_json(document: dict[str, Any]) -> str:
@@ -38,8 +44,8 @@ def facts_json(document: dict[str, Any]) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2).replace("</", "<\\/")
 
 
-def build_prompt(document: dict[str, Any]) -> str:
-    text = template()
+def build_prompt(document: dict[str, Any], name: str = DIGEST_TEMPLATE) -> str:
+    text = template(name)
     if text.count(FACTS_MARKER) != 1:
         raise ValueError(f"the prompt template must contain {FACTS_MARKER} exactly once")
     return text.replace(FACTS_MARKER, facts_json(document))
@@ -60,6 +66,7 @@ class ClaudeCli:
 
     executable: str = "claude"
     model: str | None = None
+    system_prompt: str = SYSTEM_PROMPT
     timeout: float = TIMEOUT_S
     run: Runner | None = None  # subprocess.run, looked up at call time so tests can block it
 
@@ -70,7 +77,7 @@ class ClaudeCli:
             "--output-format",
             "text",
             "--system-prompt",
-            SYSTEM_PROMPT,
+            self.system_prompt,
             "--tools",
             "",
             "--strict-mcp-config",
@@ -113,3 +120,9 @@ class ClaudeCli:
 def generate(document: dict[str, Any], model: TextModel | None = None) -> str:
     """The digest text for a facts document from `f1brief.facts.collect`."""
     return (model or ClaudeCli())(build_prompt(document))
+
+
+def generate_summary(document: dict[str, Any], model: TextModel | None = None) -> str:
+    """The monthly summary text for a document from `f1brief.offseason.collect`."""
+    model = model or ClaudeCli(system_prompt=SUMMARY_SYSTEM_PROMPT)
+    return model(build_prompt(document, SUMMARY_TEMPLATE))

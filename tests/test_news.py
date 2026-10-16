@@ -64,6 +64,10 @@ def test_html_descriptions_are_cleaned_and_dates_parsed() -> None:
         ("Ocon signs for Alpine", "", {"Ocon"}, {"contracts"}, True),
         ("Ocon on his future in F1", "", {"Ocon"}, set(), True),
         ("Ocon fastest in practice", "", {"Ocon"}, set(), False),
+        # Off-season (F18): tests and launches, but not every "test".
+        ("McLaren complete Barcelona shakedown", "", {"McLaren"}, {"testing"}, False),
+        ("Pre-season testing: day one", "", set(), {"testing"}, False),
+        ("Russell put to the test by tyre wear", "", {"Russell"}, set(), False),
         # Race-report wording that must not count as contract news.
         (
             "Verstappen shows signs of pace",

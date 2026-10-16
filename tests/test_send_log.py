@@ -126,3 +126,60 @@ def test_the_default_state_file_is_git_ignored() -> None:
         if line.strip() and not line.startswith("#")
     ]
     assert any(fnmatch(DEFAULT_STATE_FILE, pattern) for pattern in patterns)
+
+
+# --- off-season summaries (F18) ---------------------------------------------------------
+
+
+def test_a_month_is_claimed_once_and_apart_from_rounds(log: SendLog) -> None:
+    assert log.get_summary("2027-01") is None
+    assert log.claim_summary("2027-01", STARTED) is True
+    assert log.claim_summary("2027-01", FINISHED) is False
+    assert log.claim(2027, 1, STARTED) is True
+
+    log.mark_summary_sent("2027-01", FINISHED, 2)
+    record = log.get_summary("2027-01")
+    assert record is not None
+    assert (record.month, record.status, record.started_at, record.messages) == (
+        "2027-01",
+        Status.SENT,
+        STARTED,
+        2,
+    )
+
+
+def test_a_month_is_released_partial_or_forgotten_like_a_round(log: SendLog) -> None:
+    with pytest.raises(StateError, match="summary 2027-01 was not claimed"):
+        log.mark_summary_partial("2027-01", FINISHED, 0)
+    log.claim_summary("2027-01", STARTED)
+    log.release_summary("2027-01")
+    assert log.get_summary("2027-01") is None
+
+    log.claim_summary("2027-01", STARTED)
+    log.mark_summary_partial("2027-01", FINISHED, 1)
+    log.release_summary("2027-01")
+    record = log.get_summary("2027-01")
+    assert record is not None and (record.status, record.messages) == (Status.PARTIAL, 1)
+
+    assert log.forget_summary("2027-01") is True
+    assert log.forget_summary("2027-01") is False
+
+
+def test_a_state_file_from_before_summaries_gets_the_new_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "state.db"
+    with sqlite3.connect(path) as old:
+        old.execute(
+            "CREATE TABLE sends (season INTEGER NOT NULL, round INTEGER NOT NULL, "
+            "status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, "
+            "messages INTEGER, PRIMARY KEY (season, round))"
+        )
+        old.execute(
+            "INSERT INTO sends VALUES (2026, 18, 'sent', ?, NULL, 2)", (STARTED.isoformat(),)
+        )
+    old.close()
+    with SendLog(path) as log:
+        record = log.get(2026, 18)
+        assert record is not None and record.status is Status.SENT
+        assert log.claim_summary("2027-01", STARTED) is True

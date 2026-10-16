@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
@@ -15,6 +17,8 @@ from f1brief import (
     facts,
     form,
     news,
+    news_archive,
+    offseason,
     pace,
     schedule,
     send_log,
@@ -104,6 +108,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--prompt-only", action="store_true", help="print the prompt instead of running claude"
     )
 
+    summary_cmd = commands.add_parser(
+        "summary",
+        help="write the off-season monthly summary now, whatever the date (it is not sent)",
+    )
+    summary_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
+    summary_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    summary_cmd.add_argument(
+        "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+    summary_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the archived news (default: {send_log.DEFAULT_STATE_FILE})",
+    )
+
     format_cmd = commands.add_parser(
         "format", help="show a digest text as Telegram messages (MarkdownV2, split to fit)"
     )
@@ -153,14 +173,17 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     due_cmd = commands.add_parser(
-        "due", help="show whether it is time to send the digest for the next round"
+        "due",
+        help="show whether it is time to send the next round's digest (or, in the "
+        "off-season, the monthly summary)",
     )
     add_days_before(due_cmd)
     add_state(due_cmd)
 
     run_cmd = commands.add_parser(
         "run",
-        help="the daily job: when the digest is due, write it and send it, once per round",
+        help="the daily job: when the digest (or, in the off-season, the monthly summary) is "
+        "due, write it and send it, once",
     )
     add_days_before(run_cmd)
     add_state(run_cmd)
@@ -178,10 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     forget_cmd = commands.add_parser(
-        "forget", help="drop a round from the state file, so that `run` may send it again"
+        "forget",
+        help="drop a round (or an off-season month) from the state file, so that `run` may "
+        "send it again",
     )
-    forget_cmd.add_argument("--season", type=int, required=True)
-    forget_cmd.add_argument("--round", type=int, required=True)
+    forget_cmd.add_argument("--season", type=int)
+    forget_cmd.add_argument("--round", type=int)
+    forget_cmd.add_argument("--month", metavar="YYYY-MM", help="an off-season month's summary")
     add_state(forget_cmd)
     return parser
 
@@ -434,14 +460,36 @@ def _cmd_send(input_path: str | None, dry_run: bool, env_file: str) -> int:
     return 0
 
 
-def _decide(days_before: int, log: send_log.SendLog) -> send_window.Decision | None:
-    """Today's decision, or None (after printing why) when the calendar is unavailable."""
+def _calendar() -> list[schedule.Race] | None:
+    """The current season's calendar, or None (after printing why) when it is unavailable."""
     try:
-        races = schedule.fetch_schedule()
+        return schedule.fetch_schedule()
     except schedule.ScheduleError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
-    return send_window.decide(races, _now(), log, days_before)
+
+
+def _decide_summary(races: list[schedule.Race], log: send_log.SendLog) -> offseason.Decision | None:
+    """The off-season decision, or None (after printing why) when the calendar is
+    unavailable. `races` is the current season's calendar, reused when it is this year's."""
+    now = _now()
+    year = now.astimezone(schedule.WARSAW).year
+    calendar = [r for r in races if r.season == year]
+    try:
+        if not calendar:
+            calendar = schedule.fetch_schedule(year)
+    except schedule.ScheduleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+    def next_season() -> list[schedule.Race]:
+        try:
+            return schedule.fetch_schedule(year + 1)
+        except schedule.ScheduleError as exc:
+            print(f"warning: next season's calendar: {exc}", file=sys.stderr)
+            return []
+
+    return offseason.decide(calendar, now, log, next_season)
 
 
 def _cmd_due(days_before: int, state: str) -> int:
@@ -450,13 +498,21 @@ def _cmd_due(days_before: int, state: str) -> int:
         return 2
     try:
         with send_log.SendLog(state) as log:
-            decision = _decide(days_before, log)
+            races = _calendar()
+            if races is None:
+                return 1
+            decision = send_window.decide(races, _now(), log, days_before)
+            print(send_window.describe(decision))
+            if decision.due:
+                return 0
+            summary = _decide_summary(races, log)
+            if summary is None:
+                return 1
+            if summary.off_season:
+                print(offseason.describe(summary))
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    if decision is None:
-        return 1
-    print(send_window.describe(decision))
     return 0
 
 
@@ -480,16 +536,49 @@ def _digest_for(race: schedule.Race, model: str | None) -> list[str] | None:
     return _messages(text)
 
 
+@dataclass(frozen=True)
+class _Target:
+    """What a run sends: a round's digest or a month's summary, and its row in the log."""
+
+    label: str  # "round 18 of 2026"
+    forget_args: str  # "--season 2026 --round 18"
+    claim: Callable[[datetime], bool]
+    release: Callable[[], None]
+    mark_partial: Callable[[datetime, int], None]
+    mark_sent: Callable[[datetime, int], None]
+
+
+def _round_target(log: send_log.SendLog, race: schedule.Race) -> _Target:
+    season, round_ = race.season, race.round
+    return _Target(
+        label=f"round {round_} of {season}",
+        forget_args=f"--season {season} --round {round_}",
+        claim=lambda now: log.claim(season, round_, now),
+        release=lambda: log.release(season, round_),
+        mark_partial=lambda now, n: log.mark_partial(season, round_, now, n),
+        mark_sent=lambda now, n: log.mark_sent(season, round_, now, n),
+    )
+
+
+def _summary_target(log: send_log.SendLog, month: str) -> _Target:
+    return _Target(
+        label=f"the {month} summary",
+        forget_args=f"--month {month}",
+        claim=lambda now: log.claim_summary(month, now),
+        release=lambda: log.release_summary(month),
+        mark_partial=lambda now, n: log.mark_summary_partial(month, now, n),
+        mark_sent=lambda now, n: log.mark_summary_sent(month, now, n),
+    )
+
+
 def _deliver(
-    log: send_log.SendLog,
-    race: schedule.Race,
+    target: _Target,
     chunks: list[str],
     credentials: telegram_send.Credentials,
 ) -> int:
-    season, round_ = race.season, race.round
     # Claimed right before sending: of two runs at once, only one gets past this.
-    if not log.claim(season, round_, _now()):
-        print(f"round {round_} of {season} is already sent or being sent", file=sys.stderr)
+    if not target.claim(_now()):
+        print(f"{target.label} is already sent or being sent", file=sys.stderr)
         return 0
     try:
         with _telegram_client() as client:
@@ -497,20 +586,78 @@ def _deliver(
     except telegram_send.SendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         if exc.nothing_delivered:
-            log.release(season, round_)
+            target.release()
             print("nothing was delivered; the next run will try again", file=sys.stderr)
         else:
-            log.mark_partial(season, round_, _now(), exc.sent)
+            target.mark_partial(_now(), exc.sent)
             print(
-                "part of the digest may be in the chat, so it is not resent automatically; "
-                f"check the chat, then `f1brief forget --season {season} --round {round_}` "
+                "part of it may be in the chat, so it is not resent automatically; "
+                f"check the chat, then `f1brief forget {target.forget_args}` "
                 "to allow another send",
                 file=sys.stderr,
             )
         return 1
-    log.mark_sent(season, round_, _now(), len(chunks))
-    print(f"sent {len(chunks)} message(s) for round {round_} of {season}", file=sys.stderr)
+    target.mark_sent(_now(), len(chunks))
+    print(f"sent {len(chunks)} message(s) for {target.label}", file=sys.stderr)
     return 0
+
+
+def _archive_news(
+    state: str, since: datetime, dry_run: bool
+) -> tuple[list[news.NewsItem], tuple[str, ...]]:
+    """Fetches today's news, adds it to the archive (unless `dry_run`) and returns every
+    item since `since` with the feeds that failed today. A fetch failure is only a warning."""
+    fresh: list[news.NewsItem] = []
+    failed: tuple[str, ...] = tuple(f.name for f in news.FEEDS)
+    try:
+        report = news.fetch_news(since)
+        fresh, failed = list(report.items), report.failed_feeds
+    except news.NewsError as exc:
+        print(f"warning: news: {exc}", file=sys.stderr)
+    with news_archive.NewsArchive(state) as archive:
+        if not dry_run:
+            archive.add(fresh, _now())
+        items = archive.since(since)
+    # After `add` the archive holds today's items too; on a dry run they are added here.
+    # Either way `news.select` merges any item that appears twice.
+    return items + fresh, failed
+
+
+def _summary_for(
+    decision: offseason.Decision,
+    items: list[news.NewsItem],
+    failed: tuple[str, ...],
+    model: str | None,
+) -> list[str] | None:
+    """The monthly summary messages, or None (after printing why) when they cannot be made."""
+    assert decision.since is not None
+    document = offseason.collect(_now(), decision.since, decision.next_race, items, failed)
+    _warn_missing(document)
+    try:
+        text = digest.generate_summary(
+            document, digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT)
+        )
+    except digest.GenerationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    return _messages(text)
+
+
+def _send_or_print(
+    chunks: list[str] | None, credentials: telegram_send.Credentials | None, target: _Target
+) -> int:
+    if chunks is None:
+        return 1
+    if credentials is None:
+        _print_messages(chunks)
+        print(f"dry run: {len(chunks)} message(s) not sent, nothing recorded", file=sys.stderr)
+        return 0
+    return _deliver(target, chunks, credentials)
+
+
+def _credentials(dry_run: bool, env_file: str) -> telegram_send.Credentials | None:
+    """None for a dry run; raises SendError when the settings are missing."""
+    return None if dry_run else telegram_send.load_credentials(env_file=env_file)
 
 
 def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env_file: str) -> int:
@@ -519,46 +666,98 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
         return 2
     try:
         with send_log.SendLog(state) as log:
-            decision = _decide(days_before, log)
-            if decision is None:
+            races = _calendar()
+            if races is None:
                 return 1
+            decision = send_window.decide(races, _now(), log, days_before)
             print(send_window.describe(decision), file=sys.stderr)
-            if not decision.due or decision.race is None:
-                return 0
-            credentials = None
-            if not dry_run:
+            if decision.due and decision.race is not None:
                 # Before the digest is written, so missing settings cost no claude run.
-                try:
-                    credentials = telegram_send.load_credentials(env_file=env_file)
-                except telegram_send.SendError as exc:
-                    print(f"error: {exc}", file=sys.stderr)
-                    return 1
-            chunks = _digest_for(decision.race, model)
-            if chunks is None:
+                credentials = _credentials(dry_run, env_file)
+                chunks = _digest_for(decision.race, model)
+                return _send_or_print(chunks, credentials, _round_target(log, decision.race))
+            summary = _decide_summary(races, log)
+            if summary is None:
                 return 1
-            if credentials is None:
-                _print_messages(chunks)
-                print(
-                    f"dry run: {len(chunks)} message(s) not sent, nothing recorded", file=sys.stderr
-                )
+            if not summary.off_season:
                 return 0
-            return _deliver(log, decision.race, chunks, credentials)
+            print(offseason.describe(summary), file=sys.stderr)
+            assert summary.since is not None
+            if not summary.due:
+                # Every off-season day keeps the news, so the summary covers a whole month.
+                if not dry_run:
+                    _archive_news(state, summary.since, dry_run=False)
+                return 0
+            credentials = _credentials(dry_run, env_file)
+            items, failed = _archive_news(state, summary.since, dry_run)
+            chunks = _summary_for(summary, items, failed, model)
+            return _send_or_print(chunks, credentials, _summary_target(log, summary.month))
+    except telegram_send.SendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
 
-def _cmd_forget(season: int, round_: int, state: str) -> int:
+def _cmd_summary(output: str | None, model: str | None, prompt_only: bool, state: str) -> int:
+    now = _now()
+    today = now.astimezone(schedule.WARSAW).date()
+    races = _calendar()
+    if races is None:
+        return 1
+    race = offseason.next_weekend(races, today)
+    if race is None:
+        try:
+            race = offseason.next_weekend(schedule.fetch_schedule(today.year + 1), today)
+        except schedule.ScheduleError as exc:
+            print(f"warning: next season's calendar: {exc}", file=sys.stderr)
+    since = offseason.period_start(today)
+    try:
+        # Reads the archive but adds nothing to it: only `run` keeps the news.
+        items, failed = _archive_news(state, since, dry_run=True)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    document = offseason.collect(now, since, race, items, failed)
+    if prompt_only:
+        _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE), output)
+        return 0
+    _warn_missing(document)
+    try:
+        text = digest.generate_summary(
+            document, digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT)
+        )
+    except digest.GenerationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _write(text + "\n", output)
+    return 0
+
+
+def _cmd_forget(season: int | None, round_: int | None, month: str | None, state: str) -> int:
+    by_round = month is None and season is not None and round_ is not None
+    by_month = month is not None and season is None and round_ is None
+    if not (by_round or by_month):
+        print("error: give either --season and --round, or --month", file=sys.stderr)
+        return 2
+    if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        print("error: --month must look like 2027-01", file=sys.stderr)
+        return 2
     try:
         with send_log.SendLog(state) as log:
-            removed = log.forget(season, round_)
+            if month is not None:
+                removed, label = log.forget_summary(month), f"the {month} summary"
+            else:
+                assert season is not None and round_ is not None
+                removed, label = log.forget(season, round_), f"round {round_} of {season}"
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if removed:
-        print(f"forgot round {round_} of {season}")
+        print(f"forgot {label}")
     else:
-        print(f"round {round_} of {season} was not in {state}")
+        print(f"{label} was not in {state}")
     return 0
 
 
@@ -584,6 +783,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_facts(args.output)
     if args.command == "digest":
         return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
+    if args.command == "summary":
+        return _cmd_summary(args.output, args.model, args.prompt_only, args.state)
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
     if args.command == "send":
@@ -593,5 +794,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         return _cmd_run(args.days_before, args.state, args.dry_run, args.model, args.env_file)
     if args.command == "forget":
-        return _cmd_forget(args.season, args.round, args.state)
+        return _cmd_forget(args.season, args.round, args.month, args.state)
     return 0
