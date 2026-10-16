@@ -33,6 +33,10 @@ uv run f1brief digest --facts facts.json --prompt-only   # the exact prompt, wit
 uv run f1brief format --input digest.txt   # the digest as Telegram MarkdownV2 messages
 uv run f1brief send --input digest.txt --dry-run   # what would be sent, without sending
 uv run f1brief send --input digest.txt     # send the digest to the Telegram chat
+uv run f1brief due                         # is it time to send the next round's digest?
+uv run f1brief run --dry-run               # the daily job, printing instead of sending
+uv run f1brief run                         # the daily job: when due, write and send, once
+uv run f1brief forget --season 2026 --round 18   # allow `run` to send that round again
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -56,6 +60,22 @@ and the chat id: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the environm
 `.env.example` to `.env` (git-ignored) and fill it in; `--env-file` points somewhere else.
 `--dry-run` prints the messages instead and needs neither. The token is never printed: it is
 redacted from every error.
+
+`run` is what the daily schedule calls. It sends the digest for a round once, on its first
+run inside the send window: from midnight Warsaw time two days before FP1 (its Warsaw date;
+`--days-before` changes the two) until FP1 starts. Outside the window, or when the round was
+already sent, it says why and exits 0 without collecting anything. Otherwise it checks the
+Telegram settings, collects the facts, writes the digest with `claude -p` and sends it.
+`due` shows the same decision and does nothing else.
+
+Sent rounds are kept in `state.db` (SQLite, git-ignored; `--state` to use another file). A run
+claims the round right before sending, so two runs at once cannot both send. If nothing reached
+the chat (Telegram refused the first message, or there was no connection), the claim is dropped
+and the next run tries again. If some messages were, or may have been, delivered (a failure
+after the first message, a timeout, a crash), the round is never resent automatically: check
+the chat, then `forget` the round to allow another send. A round whose FP1 has started without
+a digest is skipped. `run --dry-run` prints the messages instead and records nothing (it does
+run `claude -p`).
 
 `python -m f1brief` works too, from inside the virtual environment.
 

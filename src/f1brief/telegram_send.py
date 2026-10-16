@@ -31,7 +31,21 @@ MAX_RETRY_AFTER_S = 60
 
 
 class SendError(Exception):
-    """The digest could not be sent (or the Telegram settings are missing)."""
+    """The digest could not be sent (or the Telegram settings are missing).
+
+    `sent` is how many messages Telegram confirmed before the failure. `uncertain` is True
+    when the failed request may have reached Telegram anyway (it timed out or the connection
+    broke after it was sent), so that message may be in the chat too.
+    """
+
+    def __init__(self, message: str, *, sent: int = 0, uncertain: bool = False) -> None:
+        super().__init__(message)
+        self.sent = sent
+        self.uncertain = uncertain
+
+    @property
+    def nothing_delivered(self) -> bool:
+        return self.sent == 0 and not self.uncertain
 
 
 @dataclass(frozen=True)
@@ -121,7 +135,9 @@ class Sender:
                 response = self.client.post(self._url(), json=payload)
             except httpx.HTTPError as exc:
                 reason = redact(str(exc) or type(exc).__name__, self.credentials.token)
-                raise SendError(f"request failed: {reason}") from None
+                # Only a failed connection is sure to have sent nothing.
+                not_sent = isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout)
+                raise SendError(f"request failed: {reason}", uncertain=not not_sent) from None
             if response.is_success:
                 try:
                     ok = response.json().get("ok") is True
@@ -129,7 +145,10 @@ class Sender:
                     ok = False
                 if ok:
                     return
-                raise SendError(f"unexpected response (HTTP {response.status_code})")
+                # A success status may well mean the message was delivered.
+                raise SendError(
+                    f"unexpected response (HTTP {response.status_code})", uncertain=True
+                )
             description, retry_after = _describe(response)
             description = redact(description, self.credentials.token)
             if (
@@ -152,7 +171,9 @@ class Sender:
                 self._send_one(text)
             except SendError as exc:
                 raise SendError(
-                    f"message {i + 1} of {len(messages)} not sent ({i} sent before it): {exc}"
+                    f"message {i + 1} of {len(messages)} not sent ({i} sent before it): {exc}",
+                    sent=i,
+                    uncertain=exc.uncertain,
                 ) from None
 
 
