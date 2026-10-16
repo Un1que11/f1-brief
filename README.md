@@ -27,7 +27,12 @@ uv run f1brief pace              # long-run pace in the last race: favourites vs
 uv run f1brief track             # favourites at the next race's circuit, last 3 editions
 uv run f1brief news --days 7     # news about the favourites and key topics (RSS)
 uv run f1brief weather           # forecast at the circuit for the next race weekend
+uv run f1brief facts --output facts.json   # every fact above as one JSON, with sources
 ```
+
+`facts` is what the digest is generated from. Each section lists the exact requests it was
+built from under `sources`; a section that could not be collected is `null` and its reason is
+in `missing`.
 
 `python -m f1brief` works too, from inside the virtual environment.
 
