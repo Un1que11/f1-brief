@@ -215,6 +215,20 @@ def test_a_timeout_may_have_delivered_so_it_is_not_resent(
     assert saved is not None and (saved.status, saved.messages) == (Status.PARTIAL, 0)
 
 
+def test_a_server_error_may_have_delivered_so_it_is_not_resent(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = Recorder(httpx.Response(502, text="<html>Bad Gateway</html>"))
+    monkeypatch.setattr(cli, "_telegram_client", recorder.client)
+
+    assert main(["run"]) == 1
+    saved = record()
+    assert saved is not None and (saved.status, saved.messages) == (Status.PARTIAL, 0)
+
+    assert main(["run"]) == 0
+    assert len(recorder.requests) == 1
+
+
 def test_a_round_claimed_by_another_run_is_not_sent(
     setup, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
