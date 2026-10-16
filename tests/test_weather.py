@@ -103,6 +103,28 @@ def test_hours_are_matched_correctly_across_a_clock_change(schedule_2026: dict) 
     assert (race_forecast.temperature, race_forecast.hour_local.hour) == (12.0, 14)
 
 
+def test_local_days_differ_from_utc_session_dates(schedule_2026: dict) -> None:
+    # Las Vegas: FP1 Thu 19 Nov 16:30 PST is 00:30 UTC on Friday, and the race (Sat 20:00 PST)
+    # is 04:00 UTC on Sunday. The local days are Thu-Sat, not the UTC dates Fri-Sun.
+    vegas = parse_schedule(schedule_2026)[20]
+    assert vegas.name == "Las Vegas Grand Prix"
+    padded_days = ["2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22", "2026-11-23"]
+    payload = _payload("America/Los_Angeles", {"2026-11-19T16:00": 15.0})
+    payload["daily"] = {"time": padded_days, "temperature_2m_max": [15, 16, 17, 18, 19]}
+
+    forecast = parse_forecast(payload, vegas)
+
+    assert [d.date for d in forecast.days] == [
+        date(2026, 11, 19),
+        date(2026, 11, 20),
+        date(2026, 11, 21),
+    ]
+    assert [d.temperature_max for d in forecast.days] == [15, 16, 17]
+    fp1 = forecast.sessions[0]
+    assert (fp1.kind, fp1.temperature) == (SessionKind.FP1, 15.0)
+    assert fp1.hour_local == datetime(2026, 11, 19, 16, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+
 def test_unconfirmed_or_out_of_range_sessions_are_skipped(schedule_2026: dict) -> None:
     payload = austin_payload()
     # Keep only Friday's hours: Saturday and Sunday sessions fall outside.
@@ -137,9 +159,10 @@ def test_fetch_requests_the_weekend_at_the_circuit(schedule_2026: dict) -> None:
 
     params = seen[0].url.params
     assert (params["latitude"], params["longitude"]) == ("30.1328", "-97.6411")
+    # One day of margin on each side: session dates are UTC, Open-Meteo days are local.
     assert (params["start_date"], params["end_date"], params["timezone"]) == (
-        "2026-10-23",
-        "2026-10-25",
+        "2026-10-22",
+        "2026-10-26",
         "auto",
     )
     assert "precipitation_probability" in params["hourly"]

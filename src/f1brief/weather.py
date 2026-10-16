@@ -7,7 +7,7 @@ time zone name, which is used to line hourly values up with the (UTC) session st
 """
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -149,6 +149,13 @@ def parse_forecast(payload: dict[str, Any], race: Race) -> WeekendForecast:
         }
     except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError) as exc:
         raise WeatherError(f"unexpected Open-Meteo response: {exc!r}") from exc
+    # The request is padded by a day on each side (see `fetch_forecast`); keep only the
+    # circuit-local days that actually have a session.
+    local_days = {
+        s.start_utc.astimezone(tz).date() if s.start_utc is not None else s.date
+        for s in race.sessions
+    }
+    days = tuple(d for d in days if d.date in local_days)
 
     sessions = []
     for session in race.sessions:
@@ -176,14 +183,17 @@ def parse_forecast(payload: dict[str, Any], race: Race) -> WeekendForecast:
 
 
 def weekend_dates(race: Race) -> tuple[date, date]:
-    """First and last day of the weekend (session dates; a day of margin is not needed since
-    Open-Meteo's daily values already follow the circuit's local days)."""
+    """First and last day of the weekend, as UTC session dates (from Jolpica)."""
     days = [s.date for s in race.sessions]
     return min(days), max(days)
 
 
 def fetch_forecast(race: Race, client: httpx.Client | None = None) -> WeekendForecast:
-    start, end = weekend_dates(race)
+    # Session dates are UTC, but Open-Meteo reads start/end as circuit-local days. They differ
+    # for evening/night sessions far from UTC (Las Vegas: FP1 Thu 16:30 PST = Fri 00:30 UTC),
+    # so ask for one extra day on each side; `parse_forecast` drops days without a session.
+    first, last = weekend_dates(race)
+    start, end = first - timedelta(days=1), last + timedelta(days=1)
     params = {
         "latitude": race.circuit.latitude,
         "longitude": race.circuit.longitude,
