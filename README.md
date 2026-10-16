@@ -30,6 +30,7 @@ uv run f1brief weather           # forecast at the circuit for the next race wee
 uv run f1brief facts --output facts.json   # every fact above as one JSON, with sources
 uv run f1brief digest                      # the Russian digest text, written by `claude -p`
 uv run f1brief digest --facts facts.json --prompt-only   # the exact prompt, without claude
+uv run f1brief format --input digest.txt   # the digest as Telegram MarkdownV2 messages
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -41,6 +42,11 @@ logged in. The prompt is `src/f1brief/digest_prompt.md` with the facts JSON inse
 else; `claude` runs without tools, MCP servers or user settings, so the digest can only use
 those facts. `--model` picks the model (default: claude's own), `--facts` reuses a saved
 document instead of collecting again.
+
+`format` turns a digest text into the messages that will be sent to Telegram: MarkdownV2 with
+every special character escaped and the section headings in bold, split at paragraph, line or
+word boundaries so that no message is longer than 4096 characters (`--limit` to try a smaller
+one). It reads stdin by default, so `f1brief digest | f1brief format` works too.
 
 `python -m f1brief` works too, from inside the virtual environment.
 

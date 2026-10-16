@@ -16,6 +16,7 @@ from f1brief import (
     pace,
     schedule,
     standings,
+    telegram_format,
     track_history,
     weather,
 )
@@ -96,6 +97,19 @@ def build_parser() -> argparse.ArgumentParser:
     digest_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
     digest_cmd.add_argument(
         "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+
+    format_cmd = commands.add_parser(
+        "format", help="show a digest text as Telegram messages (MarkdownV2, split to fit)"
+    )
+    format_cmd.add_argument(
+        "--input", metavar="PATH", help="a saved `digest` text (default: stdin)"
+    )
+    format_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=telegram_format.MAX_LENGTH,
+        help=f"maximum message length (default: {telegram_format.MAX_LENGTH})",
     )
     return parser
 
@@ -281,6 +295,31 @@ def _cmd_digest(
     return 0
 
 
+def _cmd_format(input_path: str | None, limit: int) -> int:
+    if limit < 2:
+        print("error: --limit must be at least 2", file=sys.stderr)
+        return 2
+    try:
+        if input_path:
+            with open(input_path, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            text = sys.stdin.read()
+    except OSError as exc:
+        print(f"error: cannot read {input_path}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        chunks = telegram_format.messages(text, limit)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for i, chunk in enumerate(chunks, 1):
+        size = telegram_format.length(chunk)
+        print(f"--- message {i}/{len(chunks)}, {size} chars ---")
+        print(chunk)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -303,4 +342,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_facts(args.output)
     if args.command == "digest":
         return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
+    if args.command == "format":
+        return _cmd_format(args.input, args.limit)
     return 0
