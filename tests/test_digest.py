@@ -343,3 +343,63 @@ def test_cli_rejects_json_that_is_not_a_facts_document(
 
     assert main(["digest", "--facts", str(other)]) == 1
     assert capsys.readouterr().err == f"error: {other} is not a `facts` document\n"
+
+
+# --- the message after qualifying (F19) uses its own fixed template ------------------------
+
+
+def test_qualifying_prompt_is_its_own_template_plus_the_document() -> None:
+    document = {"kind": "after_qualifying", "sections": {"qualifying": {}}, "missing": []}
+    prompt = digest.build_prompt(document, digest.QUALIFYING_TEMPLATE)
+
+    assert facts_of(prompt) == document
+    outside = FACTS_BLOCK.sub("<facts>\n" + digest.FACTS_MARKER + "\n</facts>", prompt)
+    assert outside == digest.template(digest.QUALIFYING_TEMPLATE)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [digest.template(digest.QUALIFYING_TEMPLATE), digest.QUALIFYING_SYSTEM_PROMPT],
+    ids=["template", "system prompt"],
+)
+def test_nothing_factual_outside_the_qualifying_document(
+    document: dict[str, Any], text: str
+) -> None:
+    known = set(names(document)) | set(document["favourites"]["drivers"])
+    known.add(document["favourites"]["team"])
+    leaked = [n for n in known if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
+    assert leaked == []
+    unnumbered = re.sub(r"^\d+\. ", "", text, flags=re.MULTILINE)
+    assert set(re.findall(r"\d+", unnumbered)) <= {"1"}
+    assert "http" not in text
+
+
+def test_qualifying_template_states_the_rules() -> None:
+    text = digest.template(digest.QUALIFYING_TEMPLATE)
+
+    assert "Write the message in Russian." in text
+    assert "Use only the facts in the document above." in text
+    assert "Every point names its source" in text
+    assert "Never guess" in text
+    assert "not the starting grid" in text
+    assert "Never invent a penalty." in text
+    sections = re.findall(r"^(\d)\. ", text.split("## Message structure")[1], re.MULTILINE)
+    assert sections == ["1", "2"]
+
+
+def test_generate_after_qualifying_uses_its_template() -> None:
+    prompts: list[str] = []
+
+    def model(prompt: str) -> str:
+        prompts.append(prompt)
+        return "1. Квалификация"
+
+    document = {"kind": "after_qualifying"}
+    assert digest.generate_after_qualifying(document, model) == "1. Квалификация"
+    assert prompts == [digest.build_prompt(document, digest.QUALIFYING_TEMPLATE)]
+
+
+def test_qualifying_claude_has_its_own_system_prompt() -> None:
+    command = digest.ClaudeCli(system_prompt=digest.QUALIFYING_SYSTEM_PROMPT).command()
+    assert command[command.index("--system-prompt") + 1] == digest.QUALIFYING_SYSTEM_PROMPT
+    assert command[command.index("--tools") + 1] == ""

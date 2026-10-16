@@ -183,3 +183,46 @@ def test_a_state_file_from_before_summaries_gets_the_new_table(tmp_path: Path) -
         record = log.get(2026, 18)
         assert record is not None and record.status is Status.SENT
         assert log.claim_summary("2027-01", STARTED) is True
+        assert log.claim_qualifying(2026, 18, STARTED) is True
+
+
+# --- messages after qualifying (F19) ----------------------------------------------------
+
+
+def test_a_qualifying_message_is_claimed_once_and_apart_from_the_digest(log: SendLog) -> None:
+    assert log.get_qualifying(2026, 18) is None
+    assert log.claim_qualifying(2026, 18, STARTED) is True
+    assert log.claim_qualifying(2026, 18, FINISHED) is False
+    assert log.get(2026, 18) is None
+    assert log.claim(2026, 18, STARTED) is True
+
+    log.mark_qualifying_sent(2026, 18, FINISHED, 1)
+    record = log.get_qualifying(2026, 18)
+    assert record is not None
+    assert (record.round, record.status, record.started_at, record.messages) == (
+        18,
+        Status.SENT,
+        STARTED,
+        1,
+    )
+    sends = log.get(2026, 18)
+    assert sends is not None and sends.status is Status.SENDING
+
+
+def test_a_qualifying_message_is_released_partial_or_forgotten_like_a_round(
+    log: SendLog,
+) -> None:
+    with pytest.raises(StateError, match="qualifying message 2026/18 was not claimed"):
+        log.mark_qualifying_partial(2026, 18, FINISHED, 0)
+    log.claim_qualifying(2026, 18, STARTED)
+    log.release_qualifying(2026, 18)
+    assert log.get_qualifying(2026, 18) is None
+
+    log.claim_qualifying(2026, 18, STARTED)
+    log.mark_qualifying_partial(2026, 18, FINISHED, 0)
+    log.release_qualifying(2026, 18)
+    record = log.get_qualifying(2026, 18)
+    assert record is not None and (record.status, record.messages) == (Status.PARTIAL, 0)
+
+    assert log.forget_qualifying(2026, 18) is True
+    assert log.forget_qualifying(2026, 18) is False
