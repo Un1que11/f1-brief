@@ -5,7 +5,17 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from f1brief import __version__, drivers, form, news, pace, schedule, standings, track_history
+from f1brief import (
+    __version__,
+    drivers,
+    form,
+    news,
+    pace,
+    schedule,
+    standings,
+    track_history,
+    weather,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     news_cmd = commands.add_parser("news", help="show recent news about the favourites")
     news_cmd.add_argument("--days", type=int, default=7, help="how far back (default: 7)")
+
+    commands.add_parser("weather", help="show the weather forecast for the next race weekend")
     return parser
 
 
@@ -170,6 +182,23 @@ def _cmd_news(days: int) -> int:
     return 0
 
 
+def _cmd_weather() -> int:
+    try:
+        race = schedule.next_race(schedule.fetch_schedule(), _now())
+        if race is None:
+            print("No upcoming race.")
+            return 0
+        forecast = weather.fetch_forecast(race)
+    except weather.ForecastNotAvailable as exc:
+        print(f"No forecast yet for {race.name}: it is beyond the forecast range ({exc}).")
+        return 0
+    except (schedule.ScheduleError, weather.WeatherError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(weather.format_forecast(forecast))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "next":
@@ -186,4 +215,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_track(args.circuit, args.editions)
     if args.command == "news":
         return _cmd_news(args.days)
+    if args.command == "weather":
+        return _cmd_weather()
     return 0

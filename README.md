@@ -26,6 +26,7 @@ uv run f1brief drivers           # Russell and Ocon form vs their teammates
 uv run f1brief pace              # long-run pace in the last race: favourites vs leaders
 uv run f1brief track             # favourites at the next race's circuit, last 3 editions
 uv run f1brief news --days 7     # news about the favourites and key topics (RSS)
+uv run f1brief weather           # forecast at the circuit for the next race weekend
 ```
 
 `python -m f1brief` works too, from inside the virtual environment.

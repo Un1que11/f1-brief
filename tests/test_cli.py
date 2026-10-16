@@ -298,3 +298,43 @@ def test_news_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixt
     monkeypatch.setattr(news, "fetch_news", boom)
     assert main(["news"]) == 1
     assert capsys.readouterr().err.endswith("error: no feed could be read\n")
+
+
+def test_weather_for_next_race(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], schedule_2026: dict
+) -> None:
+    import json
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from f1brief import cli, schedule, weather
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures/openmeteo/austin_2026-10-23_25.json").read_text()
+    )
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(schedule, "fetch_schedule", lambda: schedule.parse_schedule(schedule_2026))
+    monkeypatch.setattr(
+        weather, "fetch_forecast", lambda race: weather.parse_forecast(payload, race)
+    )
+
+    assert main(["weather"]) == 0
+    assert capsys.readouterr().out.startswith("Weather for United States Grand Prix")
+
+
+def test_weather_not_available_yet_is_not_an_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], schedule_2026: dict
+) -> None:
+    from datetime import UTC, datetime
+
+    from f1brief import cli, schedule, weather
+
+    def too_early(race: object) -> None:
+        raise weather.ForecastNotAvailable("out of allowed range")
+
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
+    monkeypatch.setattr(schedule, "fetch_schedule", lambda: schedule.parse_schedule(schedule_2026))
+    monkeypatch.setattr(weather, "fetch_forecast", too_early)
+
+    assert main(["weather"]) == 0
+    assert "No forecast yet for United States Grand Prix" in capsys.readouterr().out
