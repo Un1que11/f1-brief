@@ -1,3 +1,5 @@
+import json
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,3 +65,64 @@ def test_naive_timestamps_are_rejected(archive: NewsArchive) -> None:
 def test_an_unopenable_file_is_a_state_error(tmp_path: Path) -> None:
     with pytest.raises(StateError, match="cannot open"):
         NewsArchive(tmp_path / "no-such-dir" / "state.db")
+
+
+def test_flags_are_stored_as_a_list_of_names(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    plain = replace(ITEM, link="https://example.com/plain", ocon_future=False)
+    with NewsArchive(path) as archive:
+        archive.add([ITEM, plain], SEEN)
+    with sqlite3.connect(path) as db:
+        stored = dict(db.execute("SELECT link, flags FROM news_items"))
+    assert {link: json.loads(flags) for link, flags in stored.items()} == {
+        ITEM.link: ["ocon_future"],
+        plain.link: [],
+    }
+
+
+def test_unknown_flags_are_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    with NewsArchive(path) as archive:
+        archive.add([ITEM], SEEN)
+    with sqlite3.connect(path) as db:
+        db.execute('UPDATE news_items SET flags = \'["ocon_future", "from_a_later_version"]\'')
+    with NewsArchive(path) as archive:
+        assert archive.since(datetime(2026, 1, 1, tzinfo=UTC)) == [ITEM]
+
+
+def test_a_first_version_archive_is_migrated(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE news_items (link TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, "
+            "published TEXT, summary TEXT NOT NULL, sources TEXT NOT NULL, "
+            "favourites TEXT NOT NULL, topics TEXT NOT NULL, ocon_future INTEGER NOT NULL, "
+            "first_seen TEXT NOT NULL)"
+        )
+        db.executemany(
+            "INSERT INTO news_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    link,
+                    ITEM.title,
+                    "2026-01-09T18:00:00+00:00",
+                    ITEM.summary,
+                    json.dumps(list(ITEM.sources)),
+                    '["Ocon"]',
+                    '["contracts"]',
+                    flag,
+                    SEEN.isoformat(),
+                )
+                for link, flag in ((ITEM.link, 1), ("https://example.com/plain", 0))
+            ],
+        )
+    db.close()
+    with NewsArchive(path) as archive:
+        assert sorted(archive.since(datetime(2026, 1, 1, tzinfo=UTC)), key=lambda i: i.link) == [
+            ITEM,
+            replace(ITEM, link="https://example.com/plain", ocon_future=False),
+        ]
+        later = replace(ITEM, link="https://example.com/later")
+        assert archive.add([later], SEEN) == 1
+    with NewsArchive(path) as archive:
+        assert later in archive.since(datetime(2026, 1, 1, tzinfo=UTC))

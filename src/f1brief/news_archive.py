@@ -3,6 +3,10 @@
 RSS feeds carry only their latest items, often a week or less. The off-season summary (F18)
 covers a whole month, so every off-season run adds the relevant items it fetched here, and the
 summary reads them back for its period.
+
+Boolean tags of an item (today only `ocon_future`) are stored as a JSON list of names in
+`flags`, not as one column each, so that new ones (F20: the future of any favourite driver)
+need no schema change. Names this version does not know are ignored when reading.
 """
 
 import json
@@ -24,10 +28,23 @@ CREATE TABLE IF NOT EXISTS news_items (
     sources TEXT NOT NULL,
     favourites TEXT NOT NULL,
     topics TEXT NOT NULL,
-    ocon_future INTEGER NOT NULL,
+    flags TEXT NOT NULL,
     first_seen TEXT NOT NULL
 )
 """
+
+_COLUMNS = "link, title, published, summary, sources, favourites, topics, flags, first_seen"
+_MARKS = ", ".join("?" * len(_COLUMNS.split(", ")))
+
+# Boolean `NewsItem` fields kept in `flags`.
+_FLAGS = ("ocon_future",)
+
+# The first version (F18) had an `ocon_future INTEGER` column instead of `flags`.
+_MIGRATE_OCON_FUTURE = (
+    "ALTER TABLE news_items ADD COLUMN flags TEXT NOT NULL DEFAULT '[]'",
+    """UPDATE news_items SET flags = '["ocon_future"]' WHERE ocon_future""",
+    "ALTER TABLE news_items DROP COLUMN ocon_future",
+)
 
 
 def _stamp(moment: datetime) -> str:
@@ -44,8 +61,23 @@ class NewsArchive:
         try:
             self._db = sqlite3.connect(path, timeout=10.0, isolation_level=None)
             self._db.execute(_SCHEMA)
+            self._migrate()
         except sqlite3.Error as exc:
             raise StateError(f"cannot open {path}: {exc}") from exc
+
+    def _migrate(self) -> None:
+        # IMMEDIATE takes the write lock before the columns are read, so of two runs that
+        # open an old file at once only the first migrates it.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {row[1] for row in self._db.execute("PRAGMA table_info(news_items)")}
+            if "ocon_future" in columns:
+                for statement in _MIGRATE_OCON_FUTURE:
+                    self._db.execute(statement)
+            self._db.execute("COMMIT")
+        except sqlite3.Error:
+            self._db.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         self._db.close()
@@ -72,7 +104,7 @@ class NewsArchive:
                 json.dumps(list(i.sources)),
                 json.dumps(sorted(i.favourites)),
                 json.dumps(sorted(i.topics)),
-                int(i.ocon_future),
+                json.dumps([f for f in _FLAGS if getattr(i, f)]),
                 _stamp(now),
             )
             for i in items
@@ -80,7 +112,7 @@ class NewsArchive:
         try:
             before = self._db.total_changes
             self._db.executemany(
-                "INSERT OR IGNORE INTO news_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows
+                f"INSERT OR IGNORE INTO news_items ({_COLUMNS}) VALUES ({_MARKS})", rows
             )
             return self._db.total_changes - before
         except sqlite3.Error as exc:
@@ -91,8 +123,8 @@ class NewsArchive:
         stored."""
         try:
             rows = self._db.execute(
-                "SELECT title, link, published, summary, sources, favourites, topics, "
-                "ocon_future FROM news_items "
+                "SELECT title, link, published, summary, sources, favourites, topics, flags "
+                "FROM news_items "
                 "WHERE published >= ? OR (published IS NULL AND first_seen >= ?)",
                 (_stamp(moment), _stamp(moment)),
             ).fetchall()
@@ -107,7 +139,7 @@ class NewsArchive:
                 sources=tuple(json.loads(sources)),
                 favourites=frozenset(json.loads(favourites)),
                 topics=frozenset(json.loads(topics)),
-                ocon_future=bool(ocon_future),
+                **{f: f in json.loads(flags) for f in _FLAGS},
             )
-            for title, link, published, summary, sources, favourites, topics, ocon_future in rows
+            for title, link, published, summary, sources, favourites, topics, flags in rows
         ]
