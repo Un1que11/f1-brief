@@ -6,6 +6,8 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+import httpx
+
 from f1brief import (
     __version__,
     digest,
@@ -17,6 +19,7 @@ from f1brief import (
     schedule,
     standings,
     telegram_format,
+    telegram_send,
     track_history,
     weather,
 )
@@ -110,6 +113,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=telegram_format.MAX_LENGTH,
         help=f"maximum message length (default: {telegram_format.MAX_LENGTH})",
+    )
+
+    send_cmd = commands.add_parser(
+        "send", help="send a digest text to the Telegram chat (or print it with --dry-run)"
+    )
+    send_cmd.add_argument("--input", metavar="PATH", help="a saved `digest` text (default: stdin)")
+    send_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the messages instead of sending them (needs no token)",
+    )
+    send_cmd.add_argument(
+        "--env-file",
+        default=telegram_send.DEFAULT_ENV_FILE,
+        metavar="PATH",
+        help=f"where to look for {telegram_send.TOKEN_VAR} and {telegram_send.CHAT_ID_VAR} "
+        f"when they are not in the environment (default: {telegram_send.DEFAULT_ENV_FILE})",
     )
     return parser
 
@@ -295,28 +315,70 @@ def _cmd_digest(
     return 0
 
 
-def _cmd_format(input_path: str | None, limit: int) -> int:
-    if limit < 2:
-        print("error: --limit must be at least 2", file=sys.stderr)
-        return 2
+def _read_text(input_path: str | None) -> str | None:
+    """The text of `input_path`, or of stdin; None (after printing why) when unreadable."""
     try:
         if input_path:
             with open(input_path, encoding="utf-8") as fh:
-                text = fh.read()
-        else:
-            text = sys.stdin.read()
+                return fh.read()
+        return sys.stdin.read()
     except OSError as exc:
         print(f"error: cannot read {input_path}: {exc}", file=sys.stderr)
-        return 1
+        return None
+
+
+def _messages(text: str, limit: int = telegram_format.MAX_LENGTH) -> list[str] | None:
     try:
-        chunks = telegram_format.messages(text, limit)
+        return telegram_format.messages(text, limit)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return None
+
+
+def _print_messages(chunks: list[str]) -> None:
     for i, chunk in enumerate(chunks, 1):
         size = telegram_format.length(chunk)
         print(f"--- message {i}/{len(chunks)}, {size} chars ---")
         print(chunk)
+
+
+def _cmd_format(input_path: str | None, limit: int) -> int:
+    if limit < 2:
+        print("error: --limit must be at least 2", file=sys.stderr)
+        return 2
+    text = _read_text(input_path)
+    if text is None:
+        return 1
+    chunks = _messages(text, limit)
+    if chunks is None:
+        return 1
+    _print_messages(chunks)
+    return 0
+
+
+def _telegram_client() -> httpx.Client:
+    return httpx.Client(timeout=15.0)
+
+
+def _cmd_send(input_path: str | None, dry_run: bool, env_file: str) -> int:
+    text = _read_text(input_path)
+    if text is None:
+        return 1
+    chunks = _messages(text)
+    if chunks is None:
+        return 1
+    if dry_run:
+        _print_messages(chunks)
+        print(f"dry run: {len(chunks)} message(s) not sent", file=sys.stderr)
+        return 0
+    try:
+        credentials = telegram_send.load_credentials(env_file=env_file)
+        with _telegram_client() as client:
+            telegram_send.send(chunks, credentials, client)
+    except telegram_send.SendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"sent {len(chunks)} message(s)", file=sys.stderr)
     return 0
 
 
@@ -344,4 +406,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
+    if args.command == "send":
+        return _cmd_send(args.input, args.dry_run, args.env_file)
     return 0
