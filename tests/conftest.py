@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -63,3 +64,13 @@ def openf1_fixture(name: str) -> Any:
     the code reads. Everything else is as returned.
     """
     return json.loads((FIXTURES / "openf1" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(autouse=True)
+def no_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never start a process: above all, never `claude` (f1brief.digest.ClaudeCli)."""
+
+    def blocked(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError(f"tests must not run subprocesses: {args[0] if args else kwargs}")
+
+    monkeypatch.setattr(subprocess, "run", blocked)
