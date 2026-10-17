@@ -94,6 +94,18 @@ def test_alias_defaults_to_the_name() -> None:
     assert Favourite("haas", "Haas").aliases == ("Haas",)
 
 
+def test_only_narrows_the_favourites_to_given_ids() -> None:
+    favs = config.DEFAULT_FAVOURITES
+
+    assert favs.only() == favs
+    narrowed = favs.only(["haas"], ["bearman", "lawson", "bearman"])
+    # Known ids keep their config entry; an unknown one is named by its id; no duplicates.
+    assert narrowed.teams == (favs.teams[1],)
+    assert narrowed.drivers == (favs.drivers[2], config.Favourite("lawson", "lawson"))
+    assert favs.only(driver_ids=[]).drivers == ()
+    assert favs.only(driver_ids=[]).teams == favs.teams
+
+
 def test_timezone_is_usable() -> None:
     assert str(Config(timezone="America/Chicago").tz) == "America/Chicago"
 

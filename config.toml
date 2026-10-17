@@ -10,8 +10,8 @@ days_before_fp1 = 2
 # accepted for now: the code still uses Warsaw time directly.
 timezone = "Europe/Warsaw"
 
-# Favourites are lists: add or remove entries freely. The collectors still use their own
-# built-in favourites until F20 switches them to these lists.
+# Favourites are lists: add or remove entries freely. Every collector (form, teammate
+# comparison, pace, track history, news, story detection) iterates over them.
 #   id      - Jolpica id (constructorId / driverId)
 #   name    - how the team or driver is named in the digest
 #   aliases - words that mark a news item as being about them (default: the name)

@@ -10,6 +10,7 @@ import pytest
 
 from f1brief import facts
 from f1brief.cli import main
+from f1brief.config import DEFAULT_FAVOURITES
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 JOLPICA = "https://api.jolpi.ca/ergast/f1"
@@ -20,7 +21,7 @@ def collect(
 ) -> dict[str, Any]:
     seen = [] if seen is None else seen
     with facts_transport.client(seen, override) as client:
-        return facts.collect(NOW, client, sleep=lambda _: None)
+        return facts.collect(NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None)
 
 
 @pytest.fixture(scope="module")
@@ -36,9 +37,16 @@ def test_every_section_is_collected(document: dict[str, Any]) -> None:
     assert document["missing"] == []
     assert list(document["sections"]) == list(facts.SECTIONS)
     assert all(document["sections"].values())
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["generated_at"] == "2026-10-15T14:00:00+02:00"
-    assert document["favourites"] == {"team": "mclaren", "drivers": ["russell", "ocon"]}
+    assert document["favourites"] == {
+        "teams": [{"id": "mclaren", "name": "McLaren"}, {"id": "haas", "name": "Haas"}],
+        "drivers": [
+            {"id": "russell", "name": "George Russell", "track_future": False},
+            {"id": "ocon", "name": "Esteban Ocon", "track_future": True},
+            {"id": "bearman", "name": "Oliver Bearman", "track_future": False},
+        ],
+    }
 
 
 def test_document_is_plain_json(document: dict[str, Any]) -> None:
@@ -78,15 +86,16 @@ def test_standings_mark_favourites_and_changes(document: dict[str, Any]) -> None
         "code": "RUS",
         "teams": None,
     }
-    assert [d["id"] for d in table["drivers"] if d["favourite"]] == ["russell", "ocon"]
+    assert {d["id"] for d in table["drivers"] if d["favourite"]} == {"russell", "ocon", "bearman"}
     mclaren = favourite(table["constructors"], "id", "mclaren")
     # Grand Prix P4 + P5 = 12 + 10, plus one sprint point: standings include sprints.
     assert (mclaren["points_gained"], mclaren["favourite"]) == (23, True)
     assert "code" not in mclaren
+    assert {c["id"] for c in table["constructors"] if c["favourite"]} == {"mclaren", "haas"}
 
 
 def test_team_form_totals(document: dict[str, Any]) -> None:
-    team = document["sections"]["team_form"]
+    team, haas = document["sections"]["team_form"]["teams"]
 
     assert [r["round"] for r in team["rounds"]] == [13, 14, 15, 16, 17]
     last = team["rounds"][-1]
@@ -97,10 +106,12 @@ def test_team_form_totals(document: dict[str, Any]) -> None:
     assert last["points"] == 22
     assert team["summary"]["points"] == 73
     assert "sprint" in team["points_note"]
+    assert (haas["team_id"], haas["team"]) == ("haas", "Haas F1 Team")
+    assert [r["round"] for r in haas["rounds"]] == [13, 14, 15, 16, 17]
 
 
 def test_driver_comparison_with_teammate(document: dict[str, Any]) -> None:
-    russell, ocon = document["sections"]["drivers"]["favourites"]
+    russell, ocon, _ = document["sections"]["drivers"]["favourites"]
 
     assert (russell["driver"], ocon["driver"]) == ("George Russell", "Esteban Ocon")
     assert russell["teammates"] == ["Andrea Kimi Antonelli"]
@@ -124,6 +135,27 @@ def test_driver_comparison_with_teammate(document: dict[str, Any]) -> None:
     }
     assert russell["summary"]["race_head_to_head"] == {"ahead": 1, "behind": 4, "undecided": 0}
     assert ocon["teammates"] == ["Oliver Bearman"]
+    assert "head_to_head_note" not in ocon["summary"]
+
+
+def test_two_favourite_teammates_are_compared_once(document: dict[str, Any]) -> None:
+    _, ocon, bearman = document["sections"]["drivers"]["favourites"]
+
+    # Ocon (listed first) has the comparison with Bearman; Bearman's rounds point to it.
+    assert ocon["rounds"][-1]["teammate"] == "Oliver Bearman"
+    assert "finished_ahead_of_teammate" in ocon["rounds"][-1]
+    assert (
+        ocon["summary"]["race_head_to_head"]["ahead"]
+        + ocon["summary"]["race_head_to_head"]["behind"]
+        > 0
+    )
+    for row in bearman["rounds"]:
+        assert row["teammate"] == "Esteban Ocon"
+        assert row["head_to_head_in"] == "ocon"
+        assert "finished_ahead_of_teammate" not in row
+        assert "teammate_finish" not in row
+    assert bearman["summary"]["race_head_to_head"] == {"ahead": 0, "behind": 0, "undecided": 0}
+    assert "counted once" in bearman["summary"]["head_to_head_note"]
 
 
 def test_pace_explains_its_method(document: dict[str, Any]) -> None:
@@ -142,10 +174,17 @@ def test_track_history_at_the_next_circuit(document: dict[str, Any]) -> None:
     track = document["sections"]["track"]
 
     assert track["circuit"]["id"] == "americas"
-    assert [(e["season"], e["favourite_team_points"]) for e in track["editions"]] == [
-        (2023, 18),
-        (2024, 22),
-        (2025, 28),
+    mclaren = [
+        (
+            e["season"],
+            [p["points"] for p in e["favourite_teams_points"] if p["team_id"] == "mclaren"],
+        )
+        for e in track["editions"]
+    ]
+    assert mclaren == [(2023, [18]), (2024, [22]), (2025, [28])]
+    assert [p["team"] for p in track["editions"][0]["favourite_teams_points"]] == [
+        "McLaren",
+        "Haas",
     ]
     ocon = favourite(track["drivers"], "driver", "Esteban Ocon")
     assert ocon["teams"] == ["Alpine F1 Team", "Alpine F1 Team", "Haas F1 Team"]
@@ -162,7 +201,8 @@ def test_news_keeps_links_and_drops_failed_feeds_from_sources(document: dict[str
         "https://example.test/f1/mclaren-floor",
     ]
     assert section["items"][0]["sources"] == ["Formula 1", "BBC Sport"]
-    assert section["items"][0]["ocon_future"] is True
+    assert section["items"][0]["future"] is True
+    assert section["items"][0]["favourites"] == ["Esteban Ocon", "Haas"]
     assert [s["name"] for s in section["sources"]] == ["Formula 1", "Motorsport.com", "BBC Sport"]
 
 
@@ -187,7 +227,8 @@ def test_sources_are_exactly_the_requests_made() -> None:
         "https://www.racefans.net/feed/",
     ]
     # Every request is cited by exactly one section, except feeds that could not be read.
-    assert sorted(cited) == sorted(u for u in seen if u not in failed_feeds)
+    # (Ocon and Bearman both need the Haas rounds: one request each, one citation.)
+    assert sorted(cited) == sorted({u for u in seen if u not in failed_feeds})
     assert len(cited) == len(set(cited))
 
 
@@ -241,12 +282,12 @@ def test_weather_beyond_the_horizon_is_explained() -> None:
 
 def test_now_must_be_aware() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
-        facts.collect(datetime(2026, 10, 15))
+        facts.collect(datetime(2026, 10, 15), DEFAULT_FAVOURITES)
 
 
 def test_caller_client_is_left_open_without_the_hook() -> None:
     with facts_transport.client([]) as client:
-        facts.collect(NOW, client, sleep=lambda _: None)
+        facts.collect(NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None)
         assert client.event_hooks["request"] == []
         assert not client.is_closed
 
@@ -280,7 +321,7 @@ def test_cli_writes_the_document(
         "missing": [{"section": "weather", "reason": "beyond the forecast range"}],
     }
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites: stub)
     target = tmp_path / "facts.json"
 
     assert main(["facts", "--output", str(target)]) == 0
@@ -300,7 +341,7 @@ def test_cli_fails_when_nothing_was_collected(
         "sections": {"race": None},
         "missing": [{"section": "race", "reason": "network down"}],
     }
-    monkeypatch.setattr(facts, "collect", lambda now: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites: stub)
 
     assert main(["facts"]) == 1
     captured = capsys.readouterr()

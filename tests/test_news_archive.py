@@ -19,7 +19,7 @@ ITEM = NewsItem(
     sources=("BBC Sport", "Autosport"),
     favourites=frozenset({"Ocon"}),
     topics=frozenset({"contracts"}),
-    ocon_future=True,
+    future=True,
 )
 
 
@@ -69,15 +69,26 @@ def test_an_unopenable_file_is_a_state_error(tmp_path: Path) -> None:
 
 def test_flags_are_stored_as_a_list_of_names(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
-    plain = replace(ITEM, link="https://example.com/plain", ocon_future=False)
+    plain = replace(ITEM, link="https://example.com/plain", future=False)
     with NewsArchive(path) as archive:
         archive.add([ITEM, plain], SEEN)
     with sqlite3.connect(path) as db:
         stored = dict(db.execute("SELECT link, flags FROM news_items"))
     assert {link: json.loads(flags) for link, flags in stored.items()} == {
-        ITEM.link: ["ocon_future"],
+        ITEM.link: ["future"],
         plain.link: [],
     }
+
+
+def test_the_flag_name_from_before_f20_reads_as_future(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    with NewsArchive(path) as archive:
+        archive.add([ITEM], SEEN)
+    with sqlite3.connect(path) as db:
+        db.execute("""UPDATE news_items SET flags = '["ocon_future"]'""")
+    db.close()
+    with NewsArchive(path) as archive:
+        assert archive.since(datetime(2026, 1, 1, tzinfo=UTC)) == [ITEM]
 
 
 def test_unknown_flags_are_ignored(tmp_path: Path) -> None:
@@ -85,7 +96,7 @@ def test_unknown_flags_are_ignored(tmp_path: Path) -> None:
     with NewsArchive(path) as archive:
         archive.add([ITEM], SEEN)
     with sqlite3.connect(path) as db:
-        db.execute('UPDATE news_items SET flags = \'["ocon_future", "from_a_later_version"]\'')
+        db.execute('UPDATE news_items SET flags = \'["future", "from_a_later_version"]\'')
     with NewsArchive(path) as archive:
         assert archive.since(datetime(2026, 1, 1, tzinfo=UTC)) == [ITEM]
 
@@ -120,7 +131,7 @@ def test_a_first_version_archive_is_migrated(tmp_path: Path) -> None:
     with NewsArchive(path) as archive:
         assert sorted(archive.since(datetime(2026, 1, 1, tzinfo=UTC)), key=lambda i: i.link) == [
             ITEM,
-            replace(ITEM, link="https://example.com/plain", ocon_future=False),
+            replace(ITEM, link="https://example.com/plain", future=False),
         ]
         later = replace(ITEM, link="https://example.com/later")
         assert archive.add([later], SEEN) == 1

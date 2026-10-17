@@ -10,10 +10,13 @@ import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from typing import Any
 
 import feedparser
 import httpx
+
+from f1brief.config import Favourites
 
 
 @dataclass(frozen=True)
@@ -29,12 +32,6 @@ FEEDS = (
     Feed("RaceFans", "https://www.racefans.net/feed/"),
     Feed("BBC Sport", "https://feeds.bbci.co.uk/sport/formula1/rss.xml"),
 )
-
-FAVOURITES: dict[str, tuple[str, ...]] = {
-    "McLaren": ("McLaren",),
-    "Russell": ("Russell",),
-    "Ocon": ("Ocon",),
-}
 
 TOPICS: dict[str, tuple[str, ...]] = {
     "upgrades": (
@@ -99,8 +96,9 @@ TOPICS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# "Ocon's future": Ocon plus wording about contracts, seats or what comes next for him.
-OCON_FUTURE_TERMS = TOPICS["contracts"] + ("future", "career", "next season", "2027")
+# A favourite's future: wording about contracts, seats or what comes next for them. Checked
+# only for the favourites with `track_future` in the config.
+FUTURE_TERMS = TOPICS["contracts"] + ("future", "career", "next season", "2027")
 
 USER_AGENT = "f1brief (+https://github.com/Un1que11/f1-brief)"
 
@@ -115,9 +113,17 @@ def term_pattern(terms: Iterable[str]) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
-_FAVOURITE_PATTERNS = {name: term_pattern(terms) for name, terms in FAVOURITES.items()}
 _TOPIC_PATTERNS = {name: term_pattern(terms) for name, terms in TOPICS.items()}
-_OCON_FUTURE = term_pattern(OCON_FUTURE_TERMS)
+_FUTURE = term_pattern(FUTURE_TERMS)
+
+
+@cache
+def _favourite_patterns(favourites: Favourites) -> tuple[tuple[str, re.Pattern[str], bool], ...]:
+    """(name, pattern of its aliases, track_future) for every favourite team and driver."""
+    return tuple(
+        (fav.name, term_pattern(fav.aliases), fav.track_future)
+        for fav in favourites.teams + favourites.drivers
+    )
 
 
 @dataclass(frozen=True)
@@ -129,9 +135,11 @@ class NewsItem:
     summary: str
     # Every feed that carried the story, first one first.
     sources: tuple[str, ...]
+    # Names of the favourites it mentions, as in the config.
     favourites: frozenset[str] = field(default_factory=frozenset)
     topics: frozenset[str] = field(default_factory=frozenset)
-    ocon_future: bool = False
+    # About the future in F1 of a favourite whose future is tracked (contract, moves).
+    future: bool = False
 
     @property
     def relevant(self) -> bool:
@@ -146,8 +154,8 @@ class NewsReport:
     failed_feeds: tuple[str, ...]
 
     @property
-    def ocon_future(self) -> tuple[NewsItem, ...]:
-        return tuple(i for i in self.items if i.ocon_future)
+    def future(self) -> tuple[NewsItem, ...]:
+        return tuple(i for i in self.items if i.future)
 
 
 def _clean(text: str) -> str:
@@ -156,13 +164,16 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(without_tags)).strip()
 
 
-def classify(title: str, summary: str) -> tuple[frozenset[str], frozenset[str], bool]:
-    """(favourites mentioned, topics matched, is about Ocon's future)."""
+def classify(
+    title: str, summary: str, favourites: Favourites
+) -> tuple[frozenset[str], frozenset[str], bool]:
+    """(favourites mentioned, topics matched, is about the future of a favourite whose future
+    is tracked)."""
     text = f"{title} {summary}"
-    favourites = frozenset(n for n, p in _FAVOURITE_PATTERNS.items() if p.search(text))
+    mentioned = [(n, f) for n, p, f in _favourite_patterns(favourites) if p.search(text)]
     topics = frozenset(n for n, p in _TOPIC_PATTERNS.items() if p.search(text))
-    ocon_future = "Ocon" in favourites and bool(_OCON_FUTURE.search(text))
-    return favourites, topics, ocon_future
+    future = any(tracked for _, tracked in mentioned) and bool(_FUTURE.search(text))
+    return frozenset(n for n, _ in mentioned), topics, future
 
 
 def _published(entry: Any) -> datetime | None:
@@ -172,7 +183,7 @@ def _published(entry: Any) -> datetime | None:
     return datetime(*parsed[:6], tzinfo=UTC)
 
 
-def parse_feed(content: bytes, source: str) -> list[NewsItem]:
+def parse_feed(content: bytes, source: str, favourites: Favourites) -> list[NewsItem]:
     """Items of one feed (RSS or Atom), classified. Unrelated items are kept here; filtering
     happens in `select`."""
     parsed = feedparser.parse(content)
@@ -188,7 +199,7 @@ def parse_feed(content: bytes, source: str) -> list[NewsItem]:
         if not title or not link:
             continue
         summary = _clean(entry.get("summary", ""))
-        favourites, topics, ocon_future = classify(title, summary)
+        mentioned, topics, future = classify(title, summary, favourites)
         items.append(
             NewsItem(
                 title=title,
@@ -196,9 +207,9 @@ def parse_feed(content: bytes, source: str) -> list[NewsItem]:
                 published=_published(entry),
                 summary=summary,
                 sources=(source,),
-                favourites=favourites,
+                favourites=mentioned,
                 topics=topics,
-                ocon_future=ocon_future,
+                future=future,
             )
         )
     return items
@@ -227,7 +238,7 @@ def deduplicate(items: Iterable[NewsItem]) -> list[NewsItem]:
                 + tuple(s for s in item.sources if s not in existing.sources),
                 favourites=existing.favourites | item.favourites,
                 topics=existing.topics | item.topics,
-                ocon_future=existing.ocon_future or item.ocon_future,
+                future=existing.future or item.future,
             )
         by_link[item.link] = key
     return list(merged.values())
@@ -245,6 +256,7 @@ def select(items: Iterable[NewsItem], since: datetime) -> list[NewsItem]:
 
 def fetch_news(
     since: datetime,
+    favourites: Favourites,
     feeds: Sequence[Feed] = FEEDS,
     client: httpx.Client | None = None,
 ) -> NewsReport:
@@ -260,7 +272,7 @@ def fetch_news(
             try:
                 response = client.get(feed.url, headers={"User-Agent": USER_AGENT})
                 response.raise_for_status()
-                items.extend(parse_feed(response.content, feed.name))
+                items.extend(parse_feed(response.content, feed.name, favourites))
             except (httpx.HTTPError, NewsError):
                 failed.append(feed.name)
     finally:
@@ -289,8 +301,8 @@ def format_report(report: NewsReport) -> str:
     lines = [f"F1 news since {fmt(report.since)}: {len(report.items)} relevant items"]
     if report.failed_feeds:
         lines.append(f"Could not read: {', '.join(report.failed_feeds)}")
-    lines += ["", "Ocon's future"]
-    lines += [_line(i, fmt) for i in report.ocon_future] or ["  nothing new"]
+    lines += ["", "Favourites' future"]
+    lines += [_line(i, fmt) for i in report.future] or ["  nothing new"]
     lines += ["", "Favourites and key topics"]
-    lines += [_line(i, fmt) for i in report.items if not i.ocon_future] or ["  nothing new"]
+    lines += [_line(i, fmt) for i in report.items if not i.future] or ["  nothing new"]
     return "\n".join(lines)

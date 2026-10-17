@@ -1,6 +1,5 @@
 """The favourites' results at a circuit over its last few editions, from Jolpica."""
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -9,6 +8,7 @@ from typing import Any
 import httpx
 
 from f1brief import jolpica
+from f1brief.config import Favourites
 from f1brief.form import (
     FormError,
     QualifyingResult,
@@ -20,8 +20,6 @@ from f1brief.form import (
 from f1brief.standings import format_points
 
 DEFAULT_EDITIONS = 3
-FAVOURITE_TEAM = "mclaren"
-FAVOURITE_DRIVERS = ("russell", "ocon")
 
 
 @dataclass(frozen=True)
@@ -139,18 +137,18 @@ def past_editions(
 def build_edition(
     results_payload: dict[str, Any],
     qualifying_payload: dict[str, Any],
-    favourite_team: str = FAVOURITE_TEAM,
-    favourite_drivers: Sequence[str] = FAVOURITE_DRIVERS,
+    favourites: Favourites,
 ) -> Edition:
     rounds = build_rounds(results_payload, qualifying_payload)
     if len(rounds) != 1:
         raise FormError(f"expected results for one race, got {len(rounds)}")
     (r,) = rounds
     quali = {q.driver_id: q for q in r.qualifying}
+    teams, drivers = set(favourites.team_ids), set(favourites.driver_ids)
     entries = tuple(
         EditionEntry(race=x, qualifying=quali.get(x.driver_id))
         for x in r.race
-        if x.constructor_id == favourite_team or x.driver_id in favourite_drivers
+        if x.constructor_id in teams or x.driver_id in drivers
     )
     return Edition(season=r.season, round=r.round, race_name=r.race_name, entries=entries)
 
@@ -158,9 +156,8 @@ def build_edition(
 def fetch_track_history(
     circuit_id: str,
     before: date,
+    favourites: Favourites,
     count: int = DEFAULT_EDITIONS,
-    favourite_team: str = FAVOURITE_TEAM,
-    favourite_drivers: Sequence[str] = FAVOURITE_DRIVERS,
     client: httpx.Client | None = None,
 ) -> TrackHistory:
     """The favourites at the circuit's last `count` races before `before` (1 + 2 per race
@@ -181,8 +178,7 @@ def fetch_track_history(
             build_edition(
                 get(f"{season}/{round_}/results"),
                 get(f"{season}/{round_}/qualifying"),
-                favourite_team,
-                favourite_drivers,
+                favourites,
             )
             for season, round_ in editions
         ),
@@ -193,9 +189,7 @@ def _finish(result: RaceResult) -> str:
     return f"P{result.position_text}" if result.classified else result.status
 
 
-def format_track_history(
-    history: TrackHistory, team_id: str = FAVOURITE_TEAM, team_name: str = "McLaren"
-) -> str:
+def format_track_history(history: TrackHistory, favourites: Favourites) -> str:
     c = history.circuit
     if not history.editions:
         return f"{c.name}: no earlier races found."
@@ -211,13 +205,14 @@ def format_track_history(
                 f"      {r.driver_code or r.driver_id:<4}{r.constructor_name:<18} quali {quali:<4}"
                 f" grid {grid:<9} {_finish(r):<10} {format_points(r.points)} pts"
             )
-    points = history.team_points(team_id)
-    lines += [
-        "",
-        f"{team_name} Grand Prix points (sprints excluded): "
-        + " / ".join(format_points(p) for p in points)
-        + f" (total {format_points(sum(points, Decimal(0)))})",
-    ]
+    lines.append("")
+    for team in favourites.teams:
+        points = history.team_points(team.id)
+        lines.append(
+            f"{team.name} Grand Prix points (sprints excluded): "
+            + " / ".join(format_points(p) for p in points)
+            + f" (total {format_points(sum(points, Decimal(0)))})"
+        )
     for d in history.drivers():
         best = _finish(d.best_finish) if d.best_finish else "-"
         teams = ", ".join(dict.fromkeys(d.teams))

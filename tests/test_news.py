@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from f1brief.config import DEFAULT_FAVOURITES, Favourite, Favourites
 from f1brief.news import (
     Feed,
     NewsError,
@@ -22,6 +23,7 @@ RSS = Path(__file__).parent / "fixtures" / "rss"
 SINCE = datetime(2026, 10, 8, tzinfo=UTC)
 # The official-style fixture uses an en dash (U+2013) in this headline.
 OCON_TITLE = "Haas confirm Ocon contract talks for 2027 \u2013 what's next?"
+FAVS = DEFAULT_FAVOURITES
 
 
 def feed_bytes(name: str) -> bytes:
@@ -30,14 +32,14 @@ def feed_bytes(name: str) -> bytes:
 
 def all_items() -> list[NewsItem]:
     return (
-        parse_feed(feed_bytes("official_like.xml"), "Formula 1")
-        + parse_feed(feed_bytes("motorsport_like.xml"), "Motorsport.com")
-        + parse_feed(feed_bytes("bbc_like.xml"), "BBC Sport")
+        parse_feed(feed_bytes("official_like.xml"), "Formula 1", FAVS)
+        + parse_feed(feed_bytes("motorsport_like.xml"), "Motorsport.com", FAVS)
+        + parse_feed(feed_bytes("bbc_like.xml"), "BBC Sport", FAVS)
     )
 
 
 def test_official_feed_without_dates_and_wrong_encoding_declaration() -> None:
-    items = parse_feed(feed_bytes("official_like.xml"), "Formula 1")
+    items = parse_feed(feed_bytes("official_like.xml"), "Formula 1", FAVS)
 
     assert len(items) == 3
     assert all(i.published is None for i in items)
@@ -47,27 +49,33 @@ def test_official_feed_without_dates_and_wrong_encoding_declaration() -> None:
 
 
 def test_html_descriptions_are_cleaned_and_dates_parsed() -> None:
-    russell = parse_feed(feed_bytes("motorsport_like.xml"), "Motorsport.com")[0]
+    russell = parse_feed(feed_bytes("motorsport_like.xml"), "Motorsport.com", FAVS)[0]
 
     assert russell.summary == "The stewards ruled after the session."
     assert russell.published == datetime(2026, 10, 14, 18, 30, tzinfo=UTC)
-    bbc = parse_feed(feed_bytes("bbc_like.xml"), "BBC Sport")[0]
+    bbc = parse_feed(feed_bytes("bbc_like.xml"), "BBC Sport", FAVS)[0]
     assert bbc.published == datetime(2026, 10, 15, 7, 15, tzinfo=UTC)
 
 
+RUSSELL, OCON, BEARMAN = "George Russell", "Esteban Ocon", "Oliver Bearman"
+
+
 @pytest.mark.parametrize(
-    ("title", "summary", "favourites", "topics", "ocon_future"),
+    ("title", "summary", "favourites", "topics", "future"),
     [
-        ("Russell handed five-place grid penalty", "", {"Russell"}, {"penalties"}, False),
+        ("Russell handed five-place grid penalty", "", {RUSSELL}, {"penalties"}, False),
         ("McLaren bring new floor", "", {"McLaren"}, {"upgrades"}, False),
         ("FIA publishes technical directive", "", set(), {"regulations"}, False),
-        ("Ocon signs for Alpine", "", {"Ocon"}, {"contracts"}, True),
-        ("Ocon on his future in F1", "", {"Ocon"}, set(), True),
-        ("Ocon fastest in practice", "", {"Ocon"}, set(), False),
+        ("Ocon signs for Alpine", "", {OCON}, {"contracts"}, True),
+        ("Ocon on his future in F1", "", {OCON}, set(), True),
+        ("Ocon fastest in practice", "", {OCON}, set(), False),
+        # Only favourites with track_future in the config have their future followed.
+        ("Russell signs for Ferrari", "", {RUSSELL}, {"contracts"}, False),
+        ("Bearman and Haas agree new deal", "", {BEARMAN, "Haas"}, {"contracts"}, False),
         # Off-season (F18): tests and launches, but not every "test".
         ("McLaren complete Barcelona shakedown", "", {"McLaren"}, {"testing"}, False),
         ("Pre-season testing: day one", "", set(), {"testing"}, False),
-        ("Russell put to the test by tyre wear", "", {"Russell"}, set(), False),
+        ("Russell put to the test by tyre wear", "", {RUSSELL}, set(), False),
         # Race-report wording that must not count as contract news.
         (
             "Verstappen shows signs of pace",
@@ -78,13 +86,32 @@ def test_html_descriptions_are_cleaned_and_dates_parsed() -> None:
         ),
         # Whole words only.
         ("Russellville and McLarenesque", "", set(), set(), False),
-        ("mclaren and RUSSELL", "", {"McLaren", "Russell"}, set(), False),
+        ("mclaren and RUSSELL", "", {"McLaren", RUSSELL}, set(), False),
     ],
 )
-def test_classify(
-    title: str, summary: str, favourites: set, topics: set, ocon_future: bool
-) -> None:
-    assert classify(title, summary) == (frozenset(favourites), frozenset(topics), ocon_future)
+def test_classify(title: str, summary: str, favourites: set, topics: set, future: bool) -> None:
+    assert classify(title, summary, FAVS) == (frozenset(favourites), frozenset(topics), future)
+
+
+def test_classify_uses_the_favourites_it_is_given() -> None:
+    mine = Favourites(
+        teams=(Favourite("williams", "Williams", ("Williams", "Grove")),),
+        drivers=(Favourite("max_verstappen", "Max Verstappen", ("Verstappen",), True),),
+    )
+
+    assert classify("Verstappen to leave Red Bull?", "", mine) == (
+        frozenset({"Max Verstappen"}),
+        frozenset({"contracts"}),
+        True,
+    )
+    assert classify("Grove gets a new wind tunnel", "", mine)[0] == {"Williams"}
+    # The default favourites mean nothing to it.
+    assert classify("Ocon signs for Alpine", "", mine) == (frozenset(), {"contracts"}, False)
+    assert classify("Ocon signs for Alpine", "", Favourites((), ())) == (
+        frozenset(),
+        {"contracts"},
+        False,
+    )
 
 
 def test_same_story_from_two_feeds_is_merged_with_known_date() -> None:
@@ -95,7 +122,7 @@ def test_same_story_from_two_feeds_is_merged_with_known_date() -> None:
     # Official (undated, en dash) + BBC (dated, hyphen): one story, BBC's date.
     assert ocon.sources == ("Formula 1", "BBC Sport")
     assert ocon.published == datetime(2026, 10, 15, 7, 15, tzinfo=UTC)
-    assert ocon.ocon_future
+    assert ocon.future
     assert floor.sources == ("Formula 1", "Motorsport.com")
     assert floor.published == datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
     assert floor.topics == {"upgrades"}
@@ -138,7 +165,7 @@ def test_undated_relevant_item_without_dated_copy_is_kept_last() -> None:
 
 def test_unreadable_feed_raises() -> None:
     with pytest.raises(NewsError):
-        parse_feed(b"<html><body>Service unavailable</body>", "Broken")
+        parse_feed(b"<html><body>Service unavailable</body>", "Broken", FAVS)
 
 
 def _transport(routes: dict[str, httpx.Response]) -> httpx.MockTransport:
@@ -164,11 +191,11 @@ def test_fetch_news_combines_feeds() -> None:
     }
 
     with httpx.Client(transport=_transport(routes)) as client:
-        report = fetch_news(SINCE, FEEDS, client)
+        report = fetch_news(SINCE, FAVS, FEEDS, client)
 
     assert len(report.items) == 3
     assert report.failed_feeds == ()
-    assert [i.title for i in report.ocon_future] == [OCON_TITLE]
+    assert [i.title for i in report.future] == [OCON_TITLE]
 
 
 def test_failing_feed_is_reported_not_fatal() -> None:
@@ -179,7 +206,7 @@ def test_failing_feed_is_reported_not_fatal() -> None:
     }
 
     with httpx.Client(transport=_transport(routes)) as client:
-        report = fetch_news(SINCE, FEEDS, client)
+        report = fetch_news(SINCE, FAVS, FEEDS, client)
 
     assert report.failed_feeds == ("Motorsport.com", "BBC Sport")
     # Official items are undated, so the relevant ones are kept.
@@ -194,12 +221,12 @@ def test_all_feeds_failing_raises() -> None:
         httpx.Client(transport=_transport({})) as client,
         pytest.raises(NewsError, match="no feed"),
     ):
-        fetch_news(SINCE, FEEDS, client)
+        fetch_news(SINCE, FAVS, FEEDS, client)
 
 
 def test_since_must_be_aware() -> None:
     with pytest.raises(ValueError):
-        fetch_news(datetime(2026, 10, 8), FEEDS)
+        fetch_news(datetime(2026, 10, 8), FAVS, FEEDS)
 
 
 def test_default_since_is_a_week_back() -> None:
@@ -217,12 +244,12 @@ def test_format_report() -> None:
 
     assert text.splitlines()[0] == "F1 news since 08 Oct 00:00 UTC: 3 relevant items"
     assert "Could not read: RaceFans" in text
-    ocon_section = text.split("Ocon's future")[1].split("Favourites and key topics")[0]
+    ocon_section = text.split("Favourites' future")[1].split("Favourites and key topics")[0]
     assert "[15 Oct 07:15 UTC] Haas confirm Ocon contract talks" in ocon_section
-    assert "(Formula 1, BBC Sport; Ocon, contracts)" in ocon_section
+    assert "(Formula 1, BBC Sport; Esteban Ocon, Haas, contracts)" in ocon_section
     assert (
         "[14 Oct 18:30 UTC] Russell handed five-place grid penalty"
-        " (Motorsport.com; Russell, penalties)" in text
+        " (Motorsport.com; George Russell, penalties)" in text
     )
 
 
@@ -234,7 +261,7 @@ def test_format_empty_report() -> None:
 
 def test_html_page_instead_of_feed_is_unreadable_but_empty_feed_is_fine() -> None:
     with pytest.raises(NewsError, match="not an RSS or Atom"):
-        parse_feed(b"<html>maintenance</html>", "BBC Sport")
+        parse_feed(b"<html>maintenance</html>", "BBC Sport", FAVS)
 
     empty = b'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title></channel></rss>'
-    assert parse_feed(empty, "Quiet feed") == []
+    assert parse_feed(empty, "Quiet feed", FAVS) == []

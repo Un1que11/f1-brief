@@ -21,9 +21,10 @@ Telegram.
    reason. News items with a `null` date have an unknown date.
 5. Copy names, numbers and dates as they are in the document. Rumours stay rumours: if an
    item only reports what may happen, say so.
-6. The favourites are in `favourites` (team and driver ids). Call them by the names the news
-   gives them. News items with `ocon_future: true` are about a favourite driver's future in
-   F1 (contract, moves).
+6. The favourites are in `favourites` (teams and drivers, with ids and names); there can be
+   any number of them. Call them by the names the news gives them. News items with
+   `future: true` are about the future in F1 (contract, moves) of a favourite driver with
+   `track_future: true`.
 7. The period the summary covers is `period` (Warsaw dates); say it once, at the start.
 
 ## Summary structure
@@ -32,7 +33,7 @@ Four numbered sections in this order, each with a short Russian heading:
 
 1. Driver moves: contracts, seats and team changes (news items with the `contracts` topic).
 2. Testing and launches: tests, shakedowns and car launches (the `testing` topic).
-3. The favourites: other news about the favourite team and drivers.
+3. The favourites: other news about the favourite teams and drivers.
 4. The next season: when and where it starts (`season_start`), in Warsaw time.
 
 ## Output

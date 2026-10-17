@@ -1,7 +1,7 @@
 """Driver form over the last N rounds, compared with the teammate in the same car each round."""
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 import httpx
@@ -21,8 +21,6 @@ from f1brief.form import (
 )
 from f1brief.standings import format_points
 
-FAVOURITES = ("russell", "ocon")
-
 
 @dataclass(frozen=True)
 class RoundComparison:
@@ -35,6 +33,9 @@ class RoundComparison:
     teammate_race: RaceResult | None
     qualifying: QualifyingResult | None
     teammate_qualifying: QualifyingResult | None
+    # The teammate is a favourite listed earlier, whose form already counts this round's
+    # head-to-head (see `share_head_to_heads`); this form leaves it out.
+    shared: bool = False
 
     @property
     def qualified_ahead(self) -> bool | None:
@@ -76,8 +77,13 @@ class DriverForm:
         return sum((r.race.points for r in self.rounds), Decimal(0))
 
     @property
+    def own_rounds(self) -> tuple[RoundComparison, ...]:
+        """The rounds whose head-to-head this form counts (all but the shared ones)."""
+        return tuple(r for r in self.rounds if not r.shared)
+
+    @property
     def teammate_points(self) -> Decimal:
-        return sum((r.teammate_race.points for r in self.rounds if r.teammate_race), Decimal(0))
+        return sum((r.teammate_race.points for r in self.own_rounds if r.teammate_race), Decimal(0))
 
     @property
     def average_qualifying(self) -> Decimal | None:
@@ -93,11 +99,19 @@ class DriverForm:
 
     @property
     def qualifying_head_to_head(self) -> HeadToHead:
-        return _tally(r.qualified_ahead for r in self.rounds)
+        return _tally(r.qualified_ahead for r in self.own_rounds)
 
     @property
     def race_head_to_head(self) -> HeadToHead:
-        return _tally(r.finished_ahead for r in self.rounds)
+        return _tally(r.finished_ahead for r in self.own_rounds)
+
+    def shared_with(self) -> list[str]:
+        """Names of the favourite teammates whose forms count the shared rounds."""
+        names: list[str] = []
+        for r in self.rounds:
+            if r.shared and r.teammate_race and r.teammate_race.driver_name not in names:
+                names.append(r.teammate_race.driver_name)
+        return names
 
     def teammates(self) -> list[str]:
         """Teammate names in order of first appearance (more than one after a team change)."""
@@ -106,6 +120,24 @@ class DriverForm:
             if r.teammate_race and r.teammate_race.driver_name not in names:
                 names.append(r.teammate_race.driver_name)
         return names
+
+
+def share_head_to_heads(forms: Sequence[DriverForm]) -> list[DriverForm]:
+    """When two favourites were teammates, their head-to-head is counted once: in the form of
+    the one listed first. The other's rounds against them are marked `shared` (Ocon and
+    Bearman at Haas: Ocon's form counts it, Bearman's points to it)."""
+    result: list[DriverForm] = []
+    earlier: set[str] = set()
+    for f in forms:
+        rounds = tuple(
+            replace(r, shared=True)
+            if r.teammate_race is not None and r.teammate_race.driver_id in earlier
+            else r
+            for r in f.rounds
+        )
+        result.append(replace(f, rounds=rounds))
+        earlier.add(f.driver_id)
+    return result
 
 
 def _tally(outcomes: Iterable[bool | None]) -> HeadToHead:
@@ -226,17 +258,31 @@ def format_driver_form(form: DriverForm) -> str:
         mate_code = (mate.driver_code or mate.driver_id) if mate else "-"
         q = f"P{r.qualifying.position}" if r.qualifying else "-"
         mq = f"P{r.teammate_qualifying.position}" if r.teammate_qualifying else "-"
+        if r.shared:
+            versus = f"quali {q}; race {_finish(r.race)} (vs {mate_code}: see above)"
+        else:
+            versus = f"quali {q} vs {mate_code} {mq}; race {_finish(r.race)} vs {_finish(mate)}"
         lines.append(
-            f"  R{r.round:<2} {r.race_name} ({r.constructor_name}): quali {q} vs {mate_code} {mq}; "
-            f"race {_finish(r.race)} vs {_finish(mate)}; {format_points(r.race.points)} pts"
+            f"  R{r.round:<2} {r.race_name} ({r.constructor_name}): {versus}; "
+            f"{format_points(r.race.points)} pts"
         )
     q_h2h, r_h2h = form.qualifying_head_to_head, form.race_head_to_head
+    shared = form.shared_with()
+    excluded = ", shared rounds excluded" if shared else ""
     lines += [
         "",
         f"Grand Prix points (sprints excluded): {format_points(form.points)}"
-        f" (teammate {format_points(form.teammate_points)})",
-        f"Qualifying head-to-head: {_h2h(q_h2h)}",
-        f"Race head-to-head: {_h2h(r_h2h)}",
+        f" (teammate {format_points(form.teammate_points)}{excluded})",
+        f"Qualifying head-to-head{excluded}: {_h2h(q_h2h)}",
+        f"Race head-to-head{excluded}: {_h2h(r_h2h)}",
+    ]
+    if shared:
+        rounds = sum(1 for r in form.rounds if r.shared)
+        lines.append(
+            f"Head-to-head with {', '.join(shared)} ({rounds} shared rounds): shown once, in "
+            "their form above"
+        )
+    lines += [
         f"Average qualifying position: {format_decimal(form.average_qualifying)}",
         f"Average finish (classified): {format_decimal(form.average_finish)}",
         f"Not classified: {form.non_classified}",

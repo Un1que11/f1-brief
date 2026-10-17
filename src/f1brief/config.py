@@ -5,7 +5,7 @@ checked-in `config.toml`; a file that exists but is malformed is an error, never
 """
 
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,20 @@ class Favourites:
     @property
     def driver_ids(self) -> tuple[str, ...]:
         return tuple(d.id for d in self.drivers)
+
+    def only(
+        self, team_ids: Sequence[str] | None = None, driver_ids: Sequence[str] | None = None
+    ) -> "Favourites":
+        """These favourites with the teams or drivers replaced by the given ids (a command's
+        `--team` / `--driver`); None keeps the list. An id not in the config is named by it."""
+
+        def pick(ids: Sequence[str] | None, entries: tuple[Favourite, ...]) -> tuple:
+            if ids is None:
+                return entries
+            known = {f.id: f for f in entries}
+            return tuple(known.get(i) or Favourite(i, i) for i in dict.fromkeys(ids))
+
+        return Favourites(pick(team_ids, self.teams), pick(driver_ids, self.drivers))
 
 
 DEFAULT_FAVOURITES = Favourites(

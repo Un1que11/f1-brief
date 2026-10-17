@@ -6,6 +6,7 @@ import httpx
 import pytest
 from conftest import load_fixture
 
+from f1brief.config import DEFAULT_FAVOURITES, Favourite, Favourites
 from f1brief.form import FormError
 from f1brief.track_history import (
     TrackHistory,
@@ -17,23 +18,28 @@ from f1brief.track_history import (
 
 # Recorded 2026-10-15: /circuits/americas/races and /{season}/{round}/{results,qualifying}.
 EDITIONS = {2023: 18, 2024: 19, 2025: 19}
+# One team and two drivers, the favourites before F20: most expectations below use these.
+MCLAREN_RUSSELL_OCON = Favourites(
+    teams=(Favourite("mclaren", "McLaren"),),
+    drivers=(Favourite("russell", "George Russell"), Favourite("ocon", "Esteban Ocon")),
+)
 
 
 def races() -> dict[str, Any]:
     return load_fixture("jolpica/americas_races.json")
 
 
-def edition(season: int, **kwargs: Any):
+def edition(season: int, favourites: Favourites = MCLAREN_RUSSELL_OCON):
     return build_edition(
         load_fixture(f"jolpica/results_{season}_americas.json"),
         load_fixture(f"jolpica/qualifying_{season}_americas.json"),
-        **kwargs,
+        favourites,
     )
 
 
-def austin() -> TrackHistory:
+def austin(favourites: Favourites = MCLAREN_RUSSELL_OCON) -> TrackHistory:
     circuit, _ = past_editions(races(), date(2026, 10, 25))
-    return TrackHistory(circuit, tuple(edition(s) for s in EDITIONS))
+    return TrackHistory(circuit, tuple(edition(s, favourites) for s in EDITIONS))
 
 
 def test_past_editions_before_upcoming_race() -> None:
@@ -91,9 +97,25 @@ def test_edition_grid_differs_from_qualifying() -> None:
 
 
 def test_edition_with_other_favourites() -> None:
-    ed = edition(2025, favourite_team="ferrari", favourite_drivers=("alonso",))
+    ed = edition(
+        2025, Favourites((Favourite("ferrari", "Ferrari"),), (Favourite("alonso", "Alonso"),))
+    )
 
     assert {e.race.driver_id for e in ed.entries} == {"leclerc", "hamilton", "alonso"}
+
+
+def test_edition_with_two_favourite_teams() -> None:
+    ed = edition(2025, DEFAULT_FAVOURITES)
+
+    # McLaren and Haas (Ocon and Bearman), plus Russell; each driver once.
+    assert {e.race.driver_id for e in ed.entries} == {
+        "norris",
+        "piastri",
+        "russell",
+        "ocon",
+        "bearman",
+    }
+    assert len(ed.entries) == 5
 
 
 def test_edition_requires_exactly_one_race() -> None:
@@ -102,7 +124,9 @@ def test_edition_requires_exactly_one_race() -> None:
     results["MRData"]["total"] = "0"
 
     with pytest.raises(FormError, match="one race"):
-        build_edition(results, load_fixture("jolpica/qualifying_2025_americas.json"))
+        build_edition(
+            results, load_fixture("jolpica/qualifying_2025_americas.json"), DEFAULT_FAVOURITES
+        )
 
 
 def test_team_points_per_edition() -> None:
@@ -136,7 +160,7 @@ def test_driver_summaries() -> None:
 
 
 def test_format_track_history() -> None:
-    text = format_track_history(austin())
+    text = format_track_history(austin(), MCLAREN_RUSSELL_OCON)
 
     assert text.splitlines()[0] == (
         "Favourites at Circuit of the Americas (Austin, USA): 2023, 2024, 2025"
@@ -151,10 +175,18 @@ def test_format_track_history() -> None:
     assert text.endswith("Source: Jolpica-F1.")
 
 
+def test_format_gives_points_for_every_favourite_team() -> None:
+    text = format_track_history(austin(DEFAULT_FAVOURITES), DEFAULT_FAVOURITES)
+
+    assert "McLaren Grand Prix points (sprints excluded): 18 / 22 / 28 (total 68)" in text
+    assert "Haas Grand Prix points (sprints excluded): " in text
+    assert "  Oliver Bearman (Haas F1 Team" in text
+
+
 def test_format_without_editions() -> None:
     circuit, _ = past_editions(races(), date(2026, 10, 25))
 
-    assert format_track_history(TrackHistory(circuit, ())) == (
+    assert format_track_history(TrackHistory(circuit, ()), DEFAULT_FAVOURITES) == (
         "Circuit of the Americas: no earlier races found."
     )
 
@@ -179,7 +211,9 @@ def test_fetch_track_history_requests() -> None:
     seen: list[str] = []
 
     with httpx.Client(transport=_transport(seen)) as client:
-        history = fetch_track_history("americas", date(2026, 10, 25), client=client)
+        history = fetch_track_history(
+            "americas", date(2026, 10, 25), DEFAULT_FAVOURITES, client=client
+        )
 
     assert [ed.season for ed in history.editions] == [2023, 2024, 2025]
     assert seen == [
@@ -195,11 +229,11 @@ def test_fetch_track_history_requests() -> None:
 
 def test_fetch_rejects_non_positive_count() -> None:
     with pytest.raises(ValueError):
-        fetch_track_history("americas", date(2026, 10, 25), count=0)
+        fetch_track_history("americas", date(2026, 10, 25), DEFAULT_FAVOURITES, count=0)
 
 
 def test_fetch_error_is_form_error() -> None:
     transport = httpx.MockTransport(lambda request: httpx.Response(503))
 
     with httpx.Client(transport=transport) as client, pytest.raises(FormError, match="503"):
-        fetch_track_history("americas", date(2026, 10, 25), client=client)
+        fetch_track_history("americas", date(2026, 10, 25), DEFAULT_FAVOURITES, client=client)

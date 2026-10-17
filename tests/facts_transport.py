@@ -23,6 +23,10 @@ JOLPICA = {
     "current/constructors/mclaren/qualifying": "mclaren_qualifying_2026",
     "current/drivers/russell/results": "russell_results_2026",
     "current/drivers/ocon/results": "ocon_results_2026",
+    "current/constructors/haas/results": "haas_results_2026",
+    "current/constructors/haas/qualifying": "haas_qualifying_2026",
+    # Bearman drove only for Haas in 2026: the Haas results stand in for his own.
+    "current/drivers/bearman/results": "haas_results_2026",
     "2026/constructors/mercedes/results": "mercedes_results_2026",
     "2026/constructors/mercedes/qualifying": "mercedes_qualifying_2026",
     "2026/constructors/haas/results": "haas_results_2026",

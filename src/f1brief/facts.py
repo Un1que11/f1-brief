@@ -25,9 +25,12 @@ from f1brief import (
     track_history,
     weather,
 )
+from f1brief.config import Favourites
 from f1brief.schedule import WARSAW, Race
 
-SCHEMA_VERSION = 1
+# 2 (F20): favourites from the config (several teams), `team_form.teams`, shared teammate
+# head-to-heads in `drivers`, `favourite_teams_points` in `track`, news `future`.
+SCHEMA_VERSION = 2
 NEWS_DAYS = 7
 
 _HOSTS = {
@@ -134,18 +137,23 @@ def _change(change: standings.StandingChange, favourite: bool) -> dict[str, Any]
     return row
 
 
-def standings_facts(
-    rep: standings.StandingsReport,
-    favourite_drivers: Iterable[str] = drivers.FAVOURITES,
-    favourite_team: str = track_history.FAVOURITE_TEAM,
-) -> dict[str, Any]:
-    favourite_drivers = set(favourite_drivers)
+def favourites_facts(favourites: Favourites) -> dict[str, Any]:
+    return {
+        "teams": [{"id": t.id, "name": t.name} for t in favourites.teams],
+        "drivers": [
+            {"id": d.id, "name": d.name, "track_future": d.track_future} for d in favourites.drivers
+        ],
+    }
+
+
+def standings_facts(rep: standings.StandingsReport, favourites: Favourites) -> dict[str, Any]:
+    driver_ids, team_ids = set(favourites.driver_ids), set(favourites.team_ids)
     return {
         "season": rep.season,
         "after_round": rep.round,
         "compared_with_round": rep.previous_round,
-        "drivers": [_change(c, c.current.id in favourite_drivers) for c in rep.drivers],
-        "constructors": [_change(c, c.current.id == favourite_team) for c in rep.constructors],
+        "drivers": [_change(c, c.current.id in driver_ids) for c in rep.drivers],
+        "constructors": [_change(c, c.current.id in team_ids) for c in rep.constructors],
     }
 
 
@@ -219,18 +227,23 @@ def driver_facts(f: drivers.DriverForm) -> dict[str, Any]:
     rounds = []
     for r in f.rounds:
         mate = r.teammate_race
-        rounds.append(
-            {
-                "season": r.season,
-                "round": r.round,
-                "race_name": r.race_name,
-                "team": r.constructor_name,
-                "qualifying_position": r.qualifying.position if r.qualifying else None,
-                "grid": r.race.grid,
-                "finish": r.race.position_text,
-                "status": r.race.status,
-                "points": _num(r.race.points),
-                "teammate": mate.driver_name if mate else None,
+        row: dict[str, Any] = {
+            "season": r.season,
+            "round": r.round,
+            "race_name": r.race_name,
+            "team": r.constructor_name,
+            "qualifying_position": r.qualifying.position if r.qualifying else None,
+            "grid": r.race.grid,
+            "finish": r.race.position_text,
+            "status": r.race.status,
+            "points": _num(r.race.points),
+            "teammate": mate.driver_name if mate else None,
+        }
+        if r.shared and mate is not None:
+            # The teammate is a favourite listed earlier; that entry has this head-to-head.
+            row["head_to_head_in"] = mate.driver_id
+        else:
+            row |= {
                 "teammate_qualifying_position": (
                     r.teammate_qualifying.position if r.teammate_qualifying else None
                 ),
@@ -240,6 +253,20 @@ def driver_facts(f: drivers.DriverForm) -> dict[str, Any]:
                 "qualified_ahead_of_teammate": r.qualified_ahead,
                 "finished_ahead_of_teammate": r.finished_ahead,
             }
+        rounds.append(row)
+    summary: dict[str, Any] = {
+        "points": _num(f.points),
+        "teammate_points": _num(f.teammate_points),
+        "average_qualifying": _num(f.average_qualifying),
+        "average_finish_classified": _num(f.average_finish),
+        "not_classified": f.non_classified,
+        "qualifying_head_to_head": _head_to_head(f.qualifying_head_to_head),
+        "race_head_to_head": _head_to_head(f.race_head_to_head),
+    }
+    if f.shared_with():
+        summary["head_to_head_note"] = (
+            "Teammate points and head-to-heads leave out the rounds marked head_to_head_in: "
+            "they are counted once, in that favourite's entry."
         )
     return {
         "driver_id": f.driver_id,
@@ -247,16 +274,12 @@ def driver_facts(f: drivers.DriverForm) -> dict[str, Any]:
         "teammates": f.teammates(),
         "points_note": "Grand Prix points only; sprint points are not included.",
         "rounds": rounds,
-        "summary": {
-            "points": _num(f.points),
-            "teammate_points": _num(f.teammate_points),
-            "average_qualifying": _num(f.average_qualifying),
-            "average_finish_classified": _num(f.average_finish),
-            "not_classified": f.non_classified,
-            "qualifying_head_to_head": _head_to_head(f.qualifying_head_to_head),
-            "race_head_to_head": _head_to_head(f.race_head_to_head),
-        },
+        "summary": summary,
     }
+
+
+def drivers_facts(forms: Iterable[drivers.DriverForm]) -> dict[str, Any]:
+    return {"favourites": [driver_facts(f) for f in drivers.share_head_to_heads(list(forms))]}
 
 
 def _pace(report: pace.PaceReport, p: pace.DriverPace) -> dict[str, Any]:
@@ -289,8 +312,8 @@ def pace_facts(report: pace.PaceReport) -> dict[str, Any]:
     }
 
 
-def track_facts(history: track_history.TrackHistory) -> dict[str, Any]:
-    team_points = history.team_points(track_history.FAVOURITE_TEAM)
+def track_facts(history: track_history.TrackHistory, favourites: Favourites) -> dict[str, Any]:
+    team_points = [history.team_points(t.id) for t in favourites.teams]
     return {
         "circuit": {
             "id": history.circuit.id,
@@ -303,7 +326,10 @@ def track_facts(history: track_history.TrackHistory) -> dict[str, Any]:
                 "season": ed.season,
                 "round": ed.round,
                 "race_name": ed.race_name,
-                "favourite_team_points": _num(points),
+                "favourite_teams_points": [
+                    {"team_id": t.id, "team": t.name, "points": _num(points[n])}
+                    for t, points in zip(favourites.teams, team_points, strict=True)
+                ],
                 "entries": [
                     {
                         **_race_result(e.race),
@@ -312,7 +338,7 @@ def track_facts(history: track_history.TrackHistory) -> dict[str, Any]:
                     for e in ed.entries
                 ],
             }
-            for ed, points in zip(history.editions, team_points, strict=True)
+            for n, ed in enumerate(history.editions)
         ],
         "drivers": [
             {
@@ -344,7 +370,8 @@ def news_facts(report: news.NewsReport) -> dict[str, Any]:
                 "sources": list(i.sources),
                 "favourites": sorted(i.favourites),
                 "topics": sorted(i.topics),
-                "ocon_future": i.ocon_future,
+                # about the future in F1 of a favourite with track_future
+                "future": i.future,
             }
             for i in report.items
         ],
@@ -390,6 +417,7 @@ SECTIONS = ("race", "standings", "team_form", "drivers", "pace", "track", "news"
 
 def collect(
     now: datetime,
+    favourites: Favourites,
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
@@ -435,24 +463,30 @@ def collect(
 
         section("race", next_race)
         upcoming = race
-        section("standings", lambda: standings_facts(standings.fetch_report(client=client)))
         section(
-            "team_form",
-            lambda: team_form_facts(
-                form.fetch_team_form(track_history.FAVOURITE_TEAM, client=client)
-            ),
+            "standings",
+            lambda: standings_facts(standings.fetch_report(client=client), favourites),
         )
         section(
-            "drivers",
+            "team_form",
             lambda: {
-                "favourites": [
-                    driver_facts(drivers.fetch_driver_form(d, client=client))
-                    for d in drivers.FAVOURITES
+                "teams": [
+                    team_form_facts(form.fetch_team_form(t, client=client))
+                    for t in favourites.team_ids
                 ]
             },
         )
+        section(
+            "drivers",
+            lambda: drivers_facts(
+                drivers.fetch_driver_form(d, client=client) for d in favourites.driver_ids
+            ),
+        )
         pace_kwargs = {"sleep": sleep} if sleep is not None else {}
-        section("pace", lambda: pace_facts(pace.fetch_report(now, client, **pace_kwargs)))
+        section(
+            "pace",
+            lambda: pace_facts(pace.fetch_report(now, favourites, client, **pace_kwargs)),
+        )
         if upcoming is None:
             for name in ("track", "weather"):
                 sections[name] = None
@@ -462,13 +496,16 @@ def collect(
                 "track",
                 lambda: track_facts(
                     track_history.fetch_track_history(
-                        upcoming.circuit.id, upcoming.race.date, client=client
-                    )
+                        upcoming.circuit.id, upcoming.race.date, favourites, client=client
+                    ),
+                    favourites,
                 ),
             )
         section(
             "news",
-            lambda: news_facts(news.fetch_news(news.default_since(now, NEWS_DAYS), client=client)),
+            lambda: news_facts(
+                news.fetch_news(news.default_since(now, NEWS_DAYS), favourites, client=client)
+            ),
         )
         if upcoming is not None:
             section("weather", lambda: weather_facts(weather.fetch_forecast(upcoming, client)))
@@ -481,10 +518,7 @@ def collect(
         "schema_version": SCHEMA_VERSION,
         "generated_at": now.astimezone(WARSAW).isoformat(),
         "timezone": str(WARSAW),
-        "favourites": {
-            "team": track_history.FAVOURITE_TEAM,
-            "drivers": list(drivers.FAVOURITES),
-        },
+        "favourites": favourites_facts(favourites),
         "sections": {name: sections[name] for name in SECTIONS},
         "missing": missing,
     }

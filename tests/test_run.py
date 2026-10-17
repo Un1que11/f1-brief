@@ -31,7 +31,7 @@ class Pipeline:
         self.document, self.text = document, text
         self.collected = self.generated = 0
 
-    def collect(self, now: datetime) -> dict[str, Any]:
+    def collect(self, now: datetime, favourites: object) -> dict[str, Any]:
         self.collected += 1
         return self.document
 

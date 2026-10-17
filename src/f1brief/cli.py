@@ -58,8 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     standings_cmd.add_argument("--season", default="current", help="season year (default: current)")
 
-    form_cmd = commands.add_parser("form", help="show a team's recent race and qualifying form")
-    form_cmd.add_argument("--team", default="mclaren", help="Jolpica constructor id")
+    form_cmd = commands.add_parser(
+        "form", help="show the favourite teams' recent race and qualifying form"
+    )
+    form_cmd.add_argument(
+        "--team",
+        action="append",
+        dest="team_ids",
+        metavar="ID",
+        help="Jolpica constructor id; repeatable (default: the favourite teams in the config)",
+    )
     form_cmd.add_argument(
         "--last", type=int, default=form.DEFAULT_ROUNDS, help="number of rounds (default: 5)"
     )
@@ -73,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="driver_ids",
         metavar="ID",
-        help="Jolpica driver id; repeatable (default: russell, ocon)",
+        help="Jolpica driver id; repeatable (default: the favourite drivers in the config)",
     )
     drivers_cmd.add_argument(
         "--last", type=int, default=form.DEFAULT_ROUNDS, help="number of races (default: 5)"
@@ -149,14 +157,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="driver_ids",
         metavar="ID",
-        help="favourite Jolpica driver id; repeatable (default: russell, ocon)",
+        help="favourite Jolpica driver id; repeatable (default: the favourite drivers in the "
+        "config)",
     )
     quali_cmd.add_argument(
         "--team",
         action="append",
         dest="team_ids",
         metavar="ID",
-        help="favourite Jolpica constructor id; repeatable (default: mclaren)",
+        help="favourite Jolpica constructor id; repeatable (default: the favourite teams in the "
+        "config)",
     )
     quali_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
     quali_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
@@ -283,15 +293,6 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-# The favourites the collectors use today; F20 replaces them with the lists in config.toml.
-def _favourite_drivers() -> tuple[str, ...]:
-    return tuple(drivers.FAVOURITES)
-
-
-def _favourite_teams() -> tuple[str, ...]:
-    return (track_history.FAVOURITE_TEAM,)
-
-
 def _cmd_next(season: str) -> int:
     try:
         races = schedule.fetch_schedule(season)
@@ -316,39 +317,42 @@ def _cmd_standings(season: str) -> int:
     return 0
 
 
-def _cmd_form(team: str, last: int, season: str) -> int:
+def _cmd_form(team_ids: Sequence[str], last: int, season: str) -> int:
     if last < 1:
         print("error: --last must be at least 1", file=sys.stderr)
         return 2
+    if not team_ids:
+        print("error: no favourite teams in the config; pass --team", file=sys.stderr)
+        return 2
     try:
-        team_form = form.fetch_team_form(team, last, season)
+        forms = [form.fetch_team_form(team, last, season) for team in team_ids]
     except form.FormError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(form.format_team_form(team_form))
+    print("\n\n".join(form.format_team_form(f) for f in forms))
     return 0
 
 
-def _cmd_drivers(driver_ids: list[str] | None, last: int, season: str) -> int:
+def _cmd_drivers(driver_ids: Sequence[str], last: int, season: str) -> int:
     if last < 1:
         print("error: --last must be at least 1", file=sys.stderr)
         return 2
-    blocks = []
-    for driver_id in driver_ids or drivers.FAVOURITES:
-        try:
-            blocks.append(
-                drivers.format_driver_form(drivers.fetch_driver_form(driver_id, last, season))
-            )
-        except form.FormError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+    if not driver_ids:
+        print("error: no favourite drivers in the config; pass --driver", file=sys.stderr)
+        return 2
+    try:
+        forms = [drivers.fetch_driver_form(d, last, season) for d in driver_ids]
+    except form.FormError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    blocks = [drivers.format_driver_form(f) for f in drivers.share_head_to_heads(forms)]
     print("\n\n".join(blocks))
     return 0
 
 
-def _cmd_pace() -> int:
+def _cmd_pace(favourites: config.Favourites) -> int:
     try:
-        report = pace.fetch_report(_now())
+        report = pace.fetch_report(_now(), favourites)
     except pace.PaceError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -356,7 +360,7 @@ def _cmd_pace() -> int:
     return 0
 
 
-def _cmd_track(circuit_id: str | None, editions: int) -> int:
+def _cmd_track(circuit_id: str | None, editions: int, favourites: config.Favourites) -> int:
     if editions < 1:
         print("error: --editions must be at least 1", file=sys.stderr)
         return 2
@@ -369,20 +373,20 @@ def _cmd_track(circuit_id: str | None, editions: int) -> int:
                 print("error: no upcoming race; pass --circuit", file=sys.stderr)
                 return 1
             circuit_id, before = race.circuit.id, race.race.date
-        history = track_history.fetch_track_history(circuit_id, before, editions)
+        history = track_history.fetch_track_history(circuit_id, before, favourites, editions)
     except (schedule.ScheduleError, form.FormError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(track_history.format_track_history(history))
+    print(track_history.format_track_history(history, favourites))
     return 0
 
 
-def _cmd_news(days: int) -> int:
+def _cmd_news(days: int, favourites: config.Favourites) -> int:
     if days < 1:
         print("error: --days must be at least 1", file=sys.stderr)
         return 2
     try:
-        report = news.fetch_news(news.default_since(_now(), days))
+        report = news.fetch_news(news.default_since(_now(), days), favourites)
     except news.NewsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -407,9 +411,9 @@ def _cmd_weather() -> int:
     return 0
 
 
-def _collect_facts() -> dict | None:
+def _collect_facts(favourites: config.Favourites) -> dict | None:
     """The facts document, or None (after printing why) when no section could be collected."""
-    document = facts.collect(_now())
+    document = facts.collect(_now(), favourites)
     if not any(data is not None for data in document["sections"].values()):
         for gap in document["missing"]:
             print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
@@ -430,8 +434,8 @@ def _write(text: str, output: str | None) -> None:
         sys.stdout.write(text)
 
 
-def _cmd_facts(output: str | None) -> int:
-    document = _collect_facts()
+def _cmd_facts(output: str | None, favourites: config.Favourites) -> int:
+    document = _collect_facts(favourites)
     if document is None:
         return 1
     _write(json.dumps(document, ensure_ascii=False, indent=2) + "\n", output)
@@ -440,7 +444,11 @@ def _cmd_facts(output: str | None) -> int:
 
 
 def _cmd_digest(
-    facts_path: str | None, output: str | None, model: str | None, prompt_only: bool
+    facts_path: str | None,
+    output: str | None,
+    model: str | None,
+    prompt_only: bool,
+    favourites: config.Favourites,
 ) -> int:
     if facts_path:
         try:
@@ -453,7 +461,7 @@ def _cmd_digest(
             print(f"error: {facts_path} is not a `facts` document", file=sys.stderr)
             return 1
     else:
-        document = _collect_facts()
+        document = _collect_facts(favourites)
         if document is None:
             return 1
     if prompt_only:
@@ -595,9 +603,11 @@ def _cmd_due(days_before: int, state: str) -> int:
     return 0
 
 
-def _digest_for(race: schedule.Race, model: str | None) -> list[str] | None:
+def _digest_for(
+    race: schedule.Race, model: str | None, favourites: config.Favourites
+) -> list[str] | None:
     """The digest messages for `race`, or None (after printing why) when they cannot be made."""
-    document = _collect_facts()
+    document = _collect_facts(favourites)
     if document is None:
         return None
     about = document["sections"]["race"]
@@ -694,14 +704,14 @@ def _deliver(
 
 
 def _archive_news(
-    state: str, since: datetime, dry_run: bool
+    state: str, since: datetime, dry_run: bool, favourites: config.Favourites
 ) -> tuple[list[news.NewsItem], tuple[str, ...]]:
     """Fetches today's news, adds it to the archive (unless `dry_run`) and returns every
     item since `since` with the feeds that failed today. A fetch failure is only a warning."""
     fresh: list[news.NewsItem] = []
     failed: tuple[str, ...] = tuple(f.name for f in news.FEEDS)
     try:
-        report = news.fetch_news(since)
+        report = news.fetch_news(since, favourites)
         fresh, failed = list(report.items), report.failed_feeds
     except news.NewsError as exc:
         print(f"warning: news: {exc}", file=sys.stderr)
@@ -719,10 +729,13 @@ def _summary_for(
     items: list[news.NewsItem],
     failed: tuple[str, ...],
     model: str | None,
+    favourites: config.Favourites,
 ) -> list[str] | None:
     """The monthly summary messages, or None (after printing why) when they cannot be made."""
     assert decision.since is not None
-    document = offseason.collect(_now(), decision.since, decision.next_race, items, failed)
+    document = offseason.collect(
+        _now(), decision.since, decision.next_race, items, favourites, failed
+    )
     _warn_missing(document)
     try:
         text = digest.generate_summary(
@@ -751,12 +764,9 @@ def _classification(race: schedule.Race) -> list[form.QualifyingResult] | None:
 
 
 def _qualifying_document(
-    race: schedule.Race,
-    results: list[form.QualifyingResult],
-    driver_ids: Sequence[str],
-    team_ids: Sequence[str],
+    race: schedule.Race, results: list[form.QualifyingResult], favourites: config.Favourites
 ) -> dict:
-    document = after_qualifying.collect(race, results, _now(), driver_ids, team_ids)
+    document = after_qualifying.collect(race, results, _now(), favourites)
     _warn_missing(document)
     return document
 
@@ -789,7 +799,14 @@ def _credentials(dry_run: bool, env_file: str) -> telegram_send.Credentials | No
     return None if dry_run else telegram_send.load_credentials(env_file=env_file)
 
 
-def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env_file: str) -> int:
+def _cmd_run(
+    days_before: int,
+    state: str,
+    dry_run: bool,
+    model: str | None,
+    env_file: str,
+    favourites: config.Favourites,
+) -> int:
     if days_before < 0:
         print("error: --days-before must not be negative", file=sys.stderr)
         return 2
@@ -803,7 +820,7 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
             if decision.due and decision.race is not None:
                 # Before the digest is written, so missing settings cost no claude run.
                 credentials = _credentials(dry_run, env_file)
-                chunks = _digest_for(decision.race, model)
+                chunks = _digest_for(decision.race, model, favourites)
                 return _send_or_print(chunks, credentials, _round_target(log, decision.race))
             quali = after_qualifying.decide(races, _now(), log)
             if quali.under_way:
@@ -815,9 +832,7 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
                 results = _classification(quali.race)
                 if not results:
                     return 0 if results is not None else 1
-                document = _qualifying_document(
-                    quali.race, results, _favourite_drivers(), _favourite_teams()
-                )
+                document = _qualifying_document(quali.race, results, favourites)
                 text = _qualifying_text(document, model)
                 chunks = None if text is None else _messages(text)
                 return _send_or_print(chunks, credentials, _qualifying_target(log, quali.race))
@@ -831,11 +846,11 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
             if not summary.due:
                 # Every off-season day keeps the news, so the summary covers a whole month.
                 if not dry_run:
-                    _archive_news(state, summary.since, dry_run=False)
+                    _archive_news(state, summary.since, False, favourites)
                 return 0
             credentials = _credentials(dry_run, env_file)
-            items, failed = _archive_news(state, summary.since, dry_run)
-            chunks = _summary_for(summary, items, failed, model)
+            items, failed = _archive_news(state, summary.since, dry_run, favourites)
+            chunks = _summary_for(summary, items, failed, model, favourites)
             return _send_or_print(chunks, credentials, _summary_target(log, summary.month))
     except telegram_send.SendError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -845,7 +860,13 @@ def _cmd_run(days_before: int, state: str, dry_run: bool, model: str | None, env
         return 1
 
 
-def _cmd_summary(output: str | None, model: str | None, prompt_only: bool, state: str) -> int:
+def _cmd_summary(
+    output: str | None,
+    model: str | None,
+    prompt_only: bool,
+    state: str,
+    favourites: config.Favourites,
+) -> int:
     now = _now()
     today = now.astimezone(schedule.WARSAW).date()
     races = _calendar()
@@ -860,11 +881,11 @@ def _cmd_summary(output: str | None, model: str | None, prompt_only: bool, state
     since = offseason.period_start(today)
     try:
         # Reads the archive but adds nothing to it: only `run` keeps the news.
-        items, failed = _archive_news(state, since, dry_run=True)
+        items, failed = _archive_news(state, since, True, favourites)
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    document = offseason.collect(now, since, race, items, failed)
+    document = offseason.collect(now, since, race, items, favourites, failed)
     if prompt_only:
         _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE), output)
         return 0
@@ -888,6 +909,7 @@ def _cmd_quali(
     output: str | None,
     model: str | None,
     prompt_only: bool,
+    favourites: config.Favourites,
 ) -> int:
     try:
         races = schedule.fetch_schedule(season)
@@ -904,9 +926,7 @@ def _cmd_quali(
     results = _classification(race)
     if not results:
         return 1
-    document = _qualifying_document(
-        race, results, driver_ids or _favourite_drivers(), team_ids or _favourite_teams()
-    )
+    document = _qualifying_document(race, results, favourites.only(team_ids, driver_ids))
     if prompt_only:
         _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE), output)
         return 0
@@ -918,24 +938,29 @@ def _cmd_quali(
 
 
 def _cmd_detect_stories(
-    days: int, state: str, model: str | None, prompt_only: bool, dry_run: bool
+    days: int,
+    state: str,
+    model: str | None,
+    prompt_only: bool,
+    dry_run: bool,
+    favourites: config.Favourites,
 ) -> int:
     if days < 1:
         print("error: --days must be at least 1", file=sys.stderr)
         return 2
     now = _now()
     try:
-        report = news.fetch_news(news.default_since(now, days))
+        report = news.fetch_news(news.default_since(now, days), favourites)
     except news.NewsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if report.failed_feeds:
         print(f"warning: could not read {', '.join(report.failed_feeds)}", file=sys.stderr)
-    # The favourites the news collector tags today; F20 replaces them with config.toml.
-    favourites = [term for terms in news.FAVOURITES.values() for term in terms]
+    # The words that mark a news item as about a favourite (their aliases in the config).
+    aliases = [a for fav in favourites.teams + favourites.drivers for a in fav.aliases]
     try:
         with stories.StoryStore(state) as store:
-            watch = story_detection.watch_terms(store, favourites)
+            watch = story_detection.watch_terms(store, aliases)
             items = story_detection.pending(store, report.items, watch)
             if not items:
                 print("no new hot news items")
@@ -1033,24 +1058,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_next(args.season)
     if args.command == "standings":
         return _cmd_standings(args.season)
+    favourites = settings.favourites
     if args.command == "form":
-        return _cmd_form(args.team, args.last, args.season)
+        return _cmd_form(args.team_ids or favourites.team_ids, args.last, args.season)
     if args.command == "drivers":
-        return _cmd_drivers(args.driver_ids, args.last, args.season)
+        return _cmd_drivers(args.driver_ids or favourites.driver_ids, args.last, args.season)
     if args.command == "pace":
-        return _cmd_pace()
+        return _cmd_pace(favourites)
     if args.command == "track":
-        return _cmd_track(args.circuit, args.editions)
+        return _cmd_track(args.circuit, args.editions, favourites)
     if args.command == "news":
-        return _cmd_news(args.days)
+        return _cmd_news(args.days, favourites)
     if args.command == "weather":
         return _cmd_weather()
     if args.command == "facts":
-        return _cmd_facts(args.output)
+        return _cmd_facts(args.output, favourites)
     if args.command == "digest":
-        return _cmd_digest(args.facts, args.output, args.model, args.prompt_only)
+        return _cmd_digest(args.facts, args.output, args.model, args.prompt_only, favourites)
     if args.command == "summary":
-        return _cmd_summary(args.output, args.model, args.prompt_only, args.state)
+        return _cmd_summary(args.output, args.model, args.prompt_only, args.state, favourites)
     if args.command == "quali":
         return _cmd_quali(
             args.season,
@@ -1060,6 +1086,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output,
             args.model,
             args.prompt_only,
+            favourites,
         )
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
@@ -1068,10 +1095,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "due":
         return _cmd_due(args.days_before, args.state)
     if args.command == "run":
-        return _cmd_run(args.days_before, args.state, args.dry_run, args.model, args.env_file)
+        return _cmd_run(
+            args.days_before, args.state, args.dry_run, args.model, args.env_file, favourites
+        )
     if args.command == "detect-stories":
         return _cmd_detect_stories(
-            args.days, args.state, args.model, args.prompt_only, args.dry_run
+            args.days, args.state, args.model, args.prompt_only, args.dry_run, favourites
         )
     if args.command == "forget":
         return _cmd_forget(args.season, args.round, args.month, args.qualifying, args.state)

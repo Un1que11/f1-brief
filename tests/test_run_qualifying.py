@@ -38,8 +38,10 @@ class Stubs:
             raise self.error
         return self.results
 
-    def collect(self, race, results, now, favourite_drivers, favourite_teams) -> dict[str, Any]:
-        self.collected.append((race.round, len(results), favourite_drivers, favourite_teams))
+    def collect(self, race, results, now, favourites) -> dict[str, Any]:
+        self.collected.append(
+            (race.round, len(results), favourites.driver_ids, favourites.team_ids)
+        )
         return {"kind": "after_qualifying", "sections": {}, "missing": []}
 
     def generate(self, document: dict[str, Any], model: digest.ClaudeCli) -> str:
@@ -91,7 +93,8 @@ def test_sends_once_after_qualifying(setup, capsys: pytest.CaptureFixture[str]) 
     assert "After qualifying (round 18 of 2026): due: the race starts Sun 25 Oct 21:00." in err
     assert err.endswith("sent 1 message(s) for the message after qualifying for round 18 of 2026\n")
     # The favourites come from the collectors' lists, passed as arguments.
-    assert stubs.collected == [(18, 22, ("russell", "ocon"), ("mclaren",))]
+    # The favourites in the config.
+    assert stubs.collected == [(18, 22, ("russell", "ocon", "bearman"), ("mclaren", "haas"))]
     # The round's digest is not touched.
     with SendLog("state.db") as log:
         assert log.get(2026, 18) is None
@@ -258,7 +261,7 @@ def test_quali_passes_the_favourites_and_writes_the_text(setup, tmp_path: Path) 
     args = ["quali", "--driver", "bearman", "--driver", "ocon", "--team", "haas"]
     assert main([*args, "--output", str(output)]) == 0
     assert output.read_text(encoding="utf-8") == MESSAGE + "\n"
-    assert stubs.collected == [(18, 22, ["bearman", "ocon"], ["haas"])]
+    assert stubs.collected == [(18, 22, ("bearman", "ocon"), ("haas",))]
     assert recorder.requests == []
     assert record() is None
 

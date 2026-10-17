@@ -15,11 +15,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 
-from f1brief import drivers, facts, jolpica, news, track_history
+from f1brief import facts, jolpica, news
+from f1brief.config import Favourites
 from f1brief.schedule import WARSAW, Race, Session
 from f1brief.send_log import SendLog, Status, SummaryRecord
 
-SCHEMA_VERSION = 1
+# 2 (F20): favourites from the config (several teams), news `future`.
+SCHEMA_VERSION = 2
 SUMMARY_DAYS = 7
 LEAD_DAYS = 14
 
@@ -142,6 +144,7 @@ def collect(
     since: datetime,
     next_race: Race | None,
     items: Iterable[news.NewsItem],
+    favourites: Favourites,
     failed_feeds: Iterable[str] = (),
 ) -> dict[str, Any]:
     """The facts document for the monthly summary: the news items published since `since`
@@ -170,10 +173,7 @@ def collect(
             "from": since.astimezone(WARSAW).date().isoformat(),
             "to": now.astimezone(WARSAW).date().isoformat(),
         },
-        "favourites": {
-            "team": track_history.FAVOURITE_TEAM,
-            "drivers": list(drivers.FAVOURITES),
-        },
+        "favourites": facts.favourites_facts(favourites),
         "sections": {
             "season_start": season_start_facts(next_race) if next_race else None,
             "news": news_data,

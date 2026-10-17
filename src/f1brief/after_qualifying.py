@@ -23,11 +23,13 @@ from typing import Any
 import httpx
 
 from f1brief import drivers, facts, form, jolpica, news, schedule
+from f1brief.config import Favourites
 from f1brief.schedule import WARSAW, Race, Session, SessionKind
 from f1brief.send_log import SendLog, SendRecord, Status
 from f1brief.send_window import Window
 
-SCHEMA_VERSION = 1
+# 2 (F20): favourites from the config (ids and names), shared teammate head-to-heads.
+SCHEMA_VERSION = 2
 OPENS_AFTER = timedelta(hours=2)
 # News since FP1 (penalties, grid drops); this far back when FP1 has no start time.
 NEWS_FALLBACK = timedelta(days=3)
@@ -187,35 +189,35 @@ def _row(
 
 
 def qualifying_facts(
-    race: Race,
-    results: Sequence[form.QualifyingResult],
-    favourite_drivers: Iterable[str],
-    favourite_teams: Iterable[str],
+    race: Race, results: Sequence[form.QualifyingResult], favourites: Favourites
 ) -> dict[str, Any]:
     """The classification with the favourites marked, and each favourite against their
-    teammate. A favourite is a favourite driver or a driver of a favourite team."""
-    driver_ids, team_ids = set(favourite_drivers), set(favourite_teams)
+    teammate. A favourite is a favourite driver or a driver of a favourite team. When two
+    favourites are teammates, the comparison is given once, under the one classified first."""
+    driver_ids, team_ids = set(favourites.driver_ids), set(favourites.team_ids)
 
     def is_favourite(q: form.QualifyingResult) -> bool:
         return q.driver_id in driver_ids or q.constructor_id in team_ids
 
-    favourites = []
+    listed: list[dict[str, Any]] = []
     for q in results:
         if not is_favourite(q):
             continue
         mates = [m for m in results if m.constructor_id == q.constructor_id and m is not q]
         mate = mates[0] if len(mates) == 1 else None
-        favourites.append(
-            {
-                "driver_id": q.driver_id,
-                "driver": q.driver_name,
-                "team": q.constructor_name,
-                "position": q.position,
-                "teammate": mate.driver_name if mate else None,
-                "teammate_position": mate.position if mate else None,
-                "ahead_of_teammate": q.position < mate.position if mate else None,
-            }
-        )
+        row: dict[str, Any] = {
+            "driver_id": q.driver_id,
+            "driver": q.driver_name,
+            "team": q.constructor_name,
+            "position": q.position,
+            "teammate": mate.driver_name if mate else None,
+        }
+        if mate is not None and any(f["driver_id"] == mate.driver_id for f in listed):
+            row["head_to_head_in"] = mate.driver_id  # that entry has the comparison
+        else:
+            row["teammate_position"] = mate.position if mate else None
+            row["ahead_of_teammate"] = q.position < mate.position if mate else None
+        listed.append(row)
     classified = {q.driver_id for q in results}
     return {
         "note": (
@@ -223,7 +225,7 @@ def qualifying_facts(
             "penalties are known only from the news."
         ),
         "classification": [_row(q, results, is_favourite(q)) for q in results],
-        "favourites": favourites,
+        "favourites": listed,
         # Favourite drivers missing from the classification (did not take part, or replaced).
         "favourite_drivers_not_classified": sorted(driver_ids - classified),
         "sources": [{"name": jolpica.SOURCE_NAME, "url": classification_url(race)}],
@@ -251,8 +253,7 @@ def collect(
     race: Race,
     results: Sequence[form.QualifyingResult],
     now: datetime,
-    favourite_drivers: Sequence[str],
-    favourite_teams: Sequence[str],
+    favourites: Favourites,
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """The facts document for the message: the weekend, its qualifying `results`, the
@@ -266,7 +267,7 @@ def collect(
     client.event_hooks["request"].append(recorder)
     sections: dict[str, dict[str, Any] | None] = {
         "race": facts.race_facts(race),
-        "qualifying": qualifying_facts(race, results, favourite_drivers, favourite_teams),
+        "qualifying": qualifying_facts(race, results, favourites),
     }
     missing: list[dict[str, str]] = []
 
@@ -286,18 +287,16 @@ def collect(
     try:
         section(
             "drivers",
-            lambda: {
-                "favourites": [
-                    facts.driver_facts(
-                        form_before(drivers.fetch_driver_form(d, client=client), race)
-                    )
-                    for d in favourite_drivers
-                ]
-            },
+            lambda: facts.drivers_facts(
+                form_before(drivers.fetch_driver_form(d, client=client), race)
+                for d in favourites.driver_ids
+            ),
         )
         section(
             "news",
-            lambda: facts.news_facts(news.fetch_news(news_since(race, now), client=client)),
+            lambda: facts.news_facts(
+                news.fetch_news(news_since(race, now), favourites, client=client)
+            ),
         )
     finally:
         client.event_hooks["request"].remove(recorder)
@@ -309,7 +308,7 @@ def collect(
         "kind": "after_qualifying",
         "generated_at": now.astimezone(WARSAW).isoformat(),
         "timezone": str(WARSAW),
-        "favourites": {"teams": list(favourite_teams), "drivers": list(favourite_drivers)},
+        "favourites": facts.favourites_facts(favourites),
         "sections": {name: sections[name] for name in SECTIONS},
         "missing": missing,
     }

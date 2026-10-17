@@ -23,9 +23,10 @@ short digest of it for one reader, who gets it on Telegram before the weekend st
    number (a gap in points, a change in position) is allowed only when it follows directly
    from numbers in the document.
 6. All times are Warsaw time; say so once, in the schedule.
-7. The favourites are in `favourites` (team and driver ids). Call them by the names the
-   sections give them. News items with `ocon_future: true` are about a favourite driver's
-   future in F1 (contract, moves).
+7. The favourites are in `favourites` (teams and drivers, with ids and names); there can be
+   any number of them. Call them by the names the sections give them. News items with
+   `future: true` are about the future in F1 (contract, moves) of a favourite driver with
+   `track_future: true`.
 8. Points in `team_form` and `drivers` are Grand Prix points only, without sprints; say so if
    you compare them with the championship standings.
 
@@ -36,10 +37,12 @@ Seven numbered sections in this order, each with a short Russian heading:
 1. Round, track, session schedule in Warsaw time (`race`).
 2. What has changed since the last race: standings, penalties, regulations, upgrades
    (`standings`, `news`).
-3. The favourite team: form over the last races, pace, qualifying, upgrades (`team_form`,
-   `pace`, `news`).
-4. The favourite drivers: results, comparison with their teammate, news (`drivers`, `pace`,
-   `news`).
+3. The favourite teams, each in turn: form over the last races, pace, qualifying, upgrades
+   (`team_form`, `pace`, `news`).
+4. The favourite drivers, each in turn: results, comparison with their teammate, news
+   (`drivers`, `pace`, `news`). When two favourites are teammates, a round marked
+   `head_to_head_in` is compared in that other favourite's entry: give their head-to-head
+   once, not again for the second driver.
 5. The track: the favourites' past results there (`track`). Describe the track's character
    only if the document has facts about it; otherwise say it is unknown.
 6. Weather over the weekend and for each session (`weather`).

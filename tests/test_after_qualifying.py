@@ -13,6 +13,7 @@ from facts_transport import client as fixture_client
 
 from f1brief import after_qualifying as aq
 from f1brief import schedule
+from f1brief.config import DEFAULT_FAVOURITES
 from f1brief.schedule import Session, SessionKind
 from f1brief.send_log import SendLog
 
@@ -203,17 +204,22 @@ def test_a_failed_request_is_a_form_error(singapore: schedule.Race) -> None:
 # --- the qualifying section -------------------------------------------------------------
 
 
+def favs(drivers: list[str], teams: list[str]):
+    """The config's favourites narrowed to these ids, as `quali --driver/--team` does."""
+    return DEFAULT_FAVOURITES.only(teams, drivers)
+
+
 def test_favourites_are_drivers_and_teams_from_the_arguments(
     singapore: schedule.Race, singapore_results: list
 ) -> None:
     section = aq.qualifying_facts(
-        singapore, singapore_results, ["russell", "ocon", "bearman"], ["mclaren"]
+        singapore, singapore_results, favs(["russell", "ocon", "bearman"], ["mclaren"])
     )
     favourites = {f["driver_id"]: f for f in section["favourites"]}
     assert list(favourites) == ["norris", "russell", "piastri", "bearman", "ocon"]
     marked = [r["driver_id"] for r in section["classification"] if r["favourite"]]
     assert marked == list(favourites)
-    # Two favourites who are teammates are each compared with the other.
+    # Two favourites who are teammates are compared once, under the one classified first.
     assert favourites["bearman"] == {
         "driver_id": "bearman",
         "driver": "Oliver Bearman",
@@ -223,7 +229,14 @@ def test_favourites_are_drivers_and_teams_from_the_arguments(
         "teammate_position": 13,
         "ahead_of_teammate": True,
     }
-    assert favourites["ocon"]["ahead_of_teammate"] is False
+    assert favourites["ocon"] == {
+        "driver_id": "ocon",
+        "driver": "Esteban Ocon",
+        "team": "Haas F1 Team",
+        "position": 13,
+        "teammate": "Oliver Bearman",
+        "head_to_head_in": "bearman",
+    }
     assert favourites["russell"]["teammate"] == "Andrea Kimi Antonelli"
     assert section["favourite_drivers_not_classified"] == []
     assert section["sources"] == [
@@ -232,7 +245,7 @@ def test_favourites_are_drivers_and_teams_from_the_arguments(
 
 
 def test_no_favourites_means_none_marked(singapore: schedule.Race, singapore_results: list) -> None:
-    section = aq.qualifying_facts(singapore, singapore_results, [], [])
+    section = aq.qualifying_facts(singapore, singapore_results, favs([], []))
     assert section["favourites"] == []
     assert not any(r["favourite"] for r in section["classification"])
 
@@ -242,7 +255,7 @@ def test_gaps_are_to_the_fastest_time_of_the_last_part_reached(
 ) -> None:
     rows = {
         r["driver_id"]: r
-        for r in aq.qualifying_facts(singapore, singapore_results, [], [])["classification"]
+        for r in aq.qualifying_facts(singapore, singapore_results, favs([], []))["classification"]
     }
     assert (rows["russell"]["last_part"], rows["russell"]["gap_to_fastest_in_part_s"]) == (
         "Q3",
@@ -262,7 +275,7 @@ def test_gaps_are_to_the_fastest_time_of_the_last_part_reached(
 def test_a_favourite_missing_from_the_classification_is_listed(
     singapore: schedule.Race, singapore_results: list
 ) -> None:
-    section = aq.qualifying_facts(singapore, singapore_results, ["russell", "doohan"], [])
+    section = aq.qualifying_facts(singapore, singapore_results, favs(["russell", "doohan"], []))
     assert section["favourite_drivers_not_classified"] == ["doohan"]
 
 
@@ -270,7 +283,7 @@ def test_a_driver_without_a_teammate_in_the_classification(
     singapore: schedule.Race, singapore_results: list
 ) -> None:
     alone = [q for q in singapore_results if q.driver_id != "antonelli"]
-    (russell,) = aq.qualifying_facts(singapore, alone, ["russell"], [])["favourites"]
+    (russell,) = aq.qualifying_facts(singapore, alone, favs(["russell"], []))["favourites"]
     assert (russell["teammate"], russell["ahead_of_teammate"]) == (None, None)
 
 
@@ -285,11 +298,18 @@ def test_collect_builds_every_section_with_sources(
     seen: list[str] = []
     with fixture_client(seen) as client:
         document = aq.collect(
-            singapore, singapore_results, NOW, ["russell", "ocon"], ["mclaren"], client
+            singapore, singapore_results, NOW, favs(["russell", "ocon"], ["mclaren"]), client
         )
 
     assert document["kind"] == "after_qualifying"
-    assert document["favourites"] == {"teams": ["mclaren"], "drivers": ["russell", "ocon"]}
+    assert document["schema_version"] == 2
+    assert document["favourites"] == {
+        "teams": [{"id": "mclaren", "name": "McLaren"}],
+        "drivers": [
+            {"id": "russell", "name": "George Russell", "track_future": False},
+            {"id": "ocon", "name": "Esteban Ocon", "track_future": True},
+        ],
+    }
     sections = document["sections"]
     assert list(sections) == list(aq.SECTIONS)
     assert sections["race"]["round"] == 17
@@ -322,7 +342,7 @@ def test_a_failed_section_is_null_and_explained(
         return httpx.Response(500) if "/drivers/" in request.url.path else None
 
     with fixture_client([], no_drivers) as client:
-        document = aq.collect(singapore, singapore_results, NOW, ["russell"], [], client)
+        document = aq.collect(singapore, singapore_results, NOW, favs(["russell"], []), client)
 
     assert document["sections"]["drivers"] is None
     assert [m["section"] for m in document["missing"]] == ["drivers"]
@@ -339,4 +359,4 @@ def test_news_since_falls_back_without_an_fp1_time(singapore: schedule.Race) -> 
 
 def test_collect_needs_an_aware_now(singapore: schedule.Race) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
-        aq.collect(singapore, [], datetime(2026, 10, 10), [], [])
+        aq.collect(singapore, [], datetime(2026, 10, 10), favs([], []))
