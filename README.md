@@ -14,10 +14,23 @@ It runs locally on macOS. See `CLAUDE.md` for the full spec and `BACKLOG.md` for
 uv sync
 ```
 
+## Settings
+
+`config.toml` in the working directory holds the settings: favourite teams and drivers (as
+lists of Jolpica ids with display names and news keywords), the digest language, how many days
+before FP1 the digest goes out, and the time zone. It has no secrets; the Telegram token and
+chat id stay in `.env`. Without the file the built-in defaults (identical to the checked-in
+file) apply; a file with a typo or a bad value is an error, not ignored. Use another file with
+`uv run f1brief --config PATH <command>` and check what is in effect with `uv run f1brief config`.
+
+Today `due` and `run` take their `--days-before` default from `digest.days_before_fp1`; the
+collectors switch to the favourites lists in F20.
+
 ## Run
 
 ```bash
 uv run f1brief --help
+uv run f1brief config            # the settings in effect (config.toml or the defaults)
 uv run f1brief next              # next race weekend, session times in Europe/Warsaw
 uv run f1brief next --season 2027
 uv run f1brief standings         # standings + changes since the previous round
