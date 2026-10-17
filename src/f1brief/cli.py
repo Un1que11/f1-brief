@@ -13,6 +13,7 @@ import httpx
 from f1brief import (
     __version__,
     after_qualifying,
+    config,
     digest,
     drivers,
     facts,
@@ -40,7 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and send the F1 pre-race-weekend digest.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=f"settings file (default: ./{config.DEFAULT_PATH}, built-in defaults if absent)",
+    )
     commands = parser.add_subparsers(dest="command")
+
+    commands.add_parser("config", help="show the settings in effect and where they come from")
 
     next_cmd = commands.add_parser("next", help="show the next race weekend in Warsaw time")
     next_cmd.add_argument("--season", default="current", help="season year (default: current)")
@@ -198,10 +206,9 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument(
             "--days-before",
             type=int,
-            default=send_window.DEFAULT_DAYS_BEFORE,
             metavar="N",
             help="open the send window N days before FP1, Warsaw time "
-            f"(default: {send_window.DEFAULT_DAYS_BEFORE})",
+            "(default: digest.days_before_fp1 in the config file)",
         )
 
     due_cmd = commands.add_parser(
@@ -992,8 +999,36 @@ def _cmd_forget(
     return 0
 
 
+def _cmd_config(settings: config.Config) -> int:
+    where = str(settings.source) if settings.source else "built-in defaults (no config file)"
+    print(f"settings: {where}")
+    print(f"language: {settings.language}")
+    print(f"days before FP1: {settings.days_before_fp1}")
+    print(f"time zone: {settings.timezone}")
+    for label, entries in (
+        ("teams", settings.favourites.teams),
+        ("drivers", settings.favourites.drivers),
+    ):
+        print(f"favourite {label}:")
+        for fav in entries:
+            extra = " (and their future in F1)" if fav.track_future else ""
+            print(f"  {fav.id}: {fav.name}, news words: {', '.join(fav.aliases)}{extra}")
+        if not entries:
+            print("  none")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        settings = config.load(args.config)
+    except config.ConfigError as exc:
+        print(f"error: config: {exc}", file=sys.stderr)
+        return 2
+    if getattr(args, "days_before", "absent") is None:
+        args.days_before = settings.days_before_fp1
+    if args.command == "config":
+        return _cmd_config(settings)
     if args.command == "next":
         return _cmd_next(args.season)
     if args.command == "standings":
