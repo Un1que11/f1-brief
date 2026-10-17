@@ -25,6 +25,8 @@ from f1brief import (
     send_log,
     send_window,
     standings,
+    stories,
+    story_detection,
     telegram_format,
     telegram_send,
     track_history,
@@ -228,6 +230,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=telegram_send.DEFAULT_ENV_FILE,
         metavar="PATH",
         help=f"where to look for the Telegram settings (default: {telegram_send.DEFAULT_ENV_FILE})",
+    )
+
+    detect_cmd = commands.add_parser(
+        "detect-stories",
+        help="sort the new hot news items into stories (asks claude -p; sends nothing)",
+    )
+    detect_cmd.add_argument(
+        "--days", type=int, default=7, help="look at news from the last N days (default: 7)"
+    )
+    detect_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories (default: {send_log.DEFAULT_STATE_FILE})",
+    )
+    detect_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    detect_cmd.add_argument(
+        "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+    detect_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run claude and show what it decided, but store nothing",
     )
 
     forget_cmd = commands.add_parser(
@@ -885,6 +910,53 @@ def _cmd_quali(
     return 0
 
 
+def _cmd_detect_stories(
+    days: int, state: str, model: str | None, prompt_only: bool, dry_run: bool
+) -> int:
+    if days < 1:
+        print("error: --days must be at least 1", file=sys.stderr)
+        return 2
+    now = _now()
+    try:
+        report = news.fetch_news(news.default_since(now, days))
+    except news.NewsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if report.failed_feeds:
+        print(f"warning: could not read {', '.join(report.failed_feeds)}", file=sys.stderr)
+    # The favourites the news collector tags today; F20 replaces them with config.toml.
+    favourites = [term for terms in news.FAVOURITES.values() for term in terms]
+    try:
+        with stories.StoryStore(state) as store:
+            watch = story_detection.watch_terms(store, favourites)
+            items = story_detection.pending(store, report.items, watch)
+            if not items:
+                print("no new hot news items")
+                return 0
+            if prompt_only:
+                print(story_detection.build_prompt(store, items))
+                return 0
+            result = story_detection.detect(
+                store,
+                items,
+                digest.ClaudeCli(
+                    model=model, system_prompt=story_detection.DETECTION_SYSTEM_PROMPT
+                ),
+            )
+            if not dry_run:
+                story_detection.apply(store, result, now)
+    except (
+        send_log.StateError,
+        stories.StoryError,
+        digest.GenerationError,
+        story_detection.DetectionError,
+    ) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(story_detection.format_plan(result, stored=not dry_run))
+    return 0
+
+
 def _cmd_forget(
     season: int | None, round_: int | None, month: str | None, qualifying: bool, state: str
 ) -> int:
@@ -962,6 +1034,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_due(args.days_before, args.state)
     if args.command == "run":
         return _cmd_run(args.days_before, args.state, args.dry_run, args.model, args.env_file)
+    if args.command == "detect-stories":
+        return _cmd_detect_stories(
+            args.days, args.state, args.model, args.prompt_only, args.dry_run
+        )
     if args.command == "forget":
         return _cmd_forget(args.season, args.round, args.month, args.qualifying, args.state)
     return 0

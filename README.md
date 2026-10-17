@@ -43,6 +43,7 @@ uv run f1brief forget --month 2027-01      # allow `run` to send that month's su
 uv run f1brief quali --round 17 --prompt-only   # the prompt of the message after qualifying
 uv run f1brief quali                       # that message for the current weekend (never sent)
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
+uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -108,7 +109,15 @@ writes the message for any round without sending it (`--round`, `--season`; `--d
 Hot stories (storylines Misha can follow, see CLAUDE.md) are kept in `state.db` too, in the
 tables of `src/f1brief/stories.py`: each story with the drivers, teams and people it is about,
 its timeline of updates (every one with the URL of its source) and whether it is followed or
-muted. Nothing fills them yet; detection, the bot and alerts come next (F22–F24).
+muted. `detect-stories` fills them (F22): it takes the hot news items of the last 7 days
+(`--days`), those about a favourite or an entity of a followed story that touch contracts,
+seats, transfers, team principals, regulations or penalties, and sends the ones it has not
+checked before, with the open stories, to `claude -p` (prompt: `src/f1brief/stories_prompt.md`).
+For each item claude attaches it to a story, starts a new one or ignores it. The source of every
+story and update is the item's own URL, headline and outlet, never claude's; a decision naming
+no item sent is rejected. Answered items are not sent again. `--dry-run` shows the decisions
+and stores nothing, `--prompt-only` prints the prompt without running claude. The bot and alerts
+come next (F23–F24).
 
 `python -m f1brief` works too, from inside the virtual environment.
 

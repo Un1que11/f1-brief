@@ -109,14 +109,15 @@ class NewsError(Exception):
     """A feed could not be fetched or parsed."""
 
 
-def _pattern(terms: Iterable[str]) -> re.Pattern[str]:
+def term_pattern(terms: Iterable[str]) -> re.Pattern[str]:
+    """Matches any of the terms as a whole word or phrase, ignoring case."""
     alternatives = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
     return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
-_FAVOURITE_PATTERNS = {name: _pattern(terms) for name, terms in FAVOURITES.items()}
-_TOPIC_PATTERNS = {name: _pattern(terms) for name, terms in TOPICS.items()}
-_OCON_FUTURE = _pattern(OCON_FUTURE_TERMS)
+_FAVOURITE_PATTERNS = {name: term_pattern(terms) for name, terms in FAVOURITES.items()}
+_TOPIC_PATTERNS = {name: term_pattern(terms) for name, terms in TOPICS.items()}
+_OCON_FUTURE = term_pattern(OCON_FUTURE_TERMS)
 
 
 @dataclass(frozen=True)
