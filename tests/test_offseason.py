@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from f1brief import news, offseason, schedule
+from f1brief.config import DEFAULT_FAVOURITES
 from f1brief.news import NewsItem
 from f1brief.schedule import WARSAW, Race, Session, SessionKind
 from f1brief.send_log import SendLog
@@ -204,7 +205,7 @@ def item(title: str, link: str, published: datetime | None, source: str, **tags:
         sources=(source,),
         favourites=frozenset(tags.get("favourites", ())),
         topics=frozenset(tags.get("topics", ())),
-        ocon_future=tags.get("ocon_future", False),
+        future=tags.get("future", False),
     )
 
 
@@ -215,7 +216,7 @@ MOVE = item(
     "BBC Sport",
     favourites={"Ocon"},
     topics={"contracts"},
-    ocon_future=True,
+    future=True,
 )
 TEST = item(
     "McLaren completes its shakedown",
@@ -235,16 +236,23 @@ def test_collect_merges_archived_and_fresh_news(calendar: list[Race]) -> None:
     unrelated = item("A quiet week", "https://example.com/quiet", utc(2026, 1, 1), "BBC Sport")
 
     document = offseason.collect(
-        NOW, SINCE, calendar[0], [MOVE, TEST, same_story, old, unrelated], ["RaceFans"]
+        NOW,
+        SINCE,
+        calendar[0],
+        [MOVE, TEST, same_story, old, unrelated],
+        DEFAULT_FAVOURITES,
+        ["RaceFans"],
     )
 
     assert document["kind"] == "monthly_summary"
+    assert document["schema_version"] == 2
+    assert [d["id"] for d in document["favourites"]["drivers"]] == ["russell", "ocon", "bearman"]
     assert document["period"] == {"from": "2025-12-01", "to": "2026-01-03"}
     assert document["missing"] == []
     section = document["sections"]["news"]
     assert [i["link"] for i in section["items"]] == [TEST.link, MOVE.link]
     assert section["items"][1]["sources"] == ["BBC Sport", "Autosport"]
-    assert section["items"][1]["ocon_future"] is True
+    assert section["items"][1]["future"] is True
     assert section["failed_feeds"] == ["RaceFans"]
     assert {s["name"] for s in section["sources"]} == {"BBC Sport", "Autosport", "Motorsport.com"}
     assert all(s["url"].startswith("https://") for s in section["sources"])
@@ -253,7 +261,7 @@ def test_collect_merges_archived_and_fresh_news(calendar: list[Race]) -> None:
 
 
 def test_collect_names_the_start_of_the_next_season(calendar: list[Race]) -> None:
-    document = offseason.collect(NOW, SINCE, calendar[0], [MOVE])
+    document = offseason.collect(NOW, SINCE, calendar[0], [MOVE], DEFAULT_FAVOURITES)
     start = document["sections"]["season_start"]
     assert (start["season"], start["round"], start["name"]) == (2026, 1, "Australian Grand Prix")
     fp1 = start["sessions"][0]
@@ -265,10 +273,10 @@ def test_collect_names_the_start_of_the_next_season(calendar: list[Race]) -> Non
 
 def test_collect_says_what_is_missing() -> None:
     every_feed = [f.name for f in news.FEEDS]
-    document = offseason.collect(NOW, SINCE, None, [], every_feed)
+    document = offseason.collect(NOW, SINCE, None, [], DEFAULT_FAVOURITES, every_feed)
     assert document["sections"] == {"season_start": None, "news": None}
     assert [m["section"] for m in document["missing"]] == ["news", "season_start"]
 
     # No news at all is not missing news, as long as some feed was read.
-    quiet = offseason.collect(NOW, SINCE, None, [], every_feed[1:])
+    quiet = offseason.collect(NOW, SINCE, None, [], DEFAULT_FAVOURITES, every_feed[1:])
     assert quiet["sections"]["news"]["items"] == []

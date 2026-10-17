@@ -5,7 +5,7 @@ but the F1 live-timing archive it reads now answers 401 and its mirror has no da
 """
 
 import statistics
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 
 from f1brief import openf1
+from f1brief.config import Favourites
+from f1brief.news import term_pattern
 
 # A stint counts as a long run from this many laps.
 MIN_STINT_LAPS = 8
@@ -23,9 +25,6 @@ OUTLIER_FACTOR = Decimal("1.07")
 MIN_LAPS = 5
 # The reference is the best long-run pace among this many top finishers.
 LEADERS = 3
-
-FAVOURITE_TEAM = "McLaren"
-FAVOURITE_DRIVERS = ("RUS", "OCO")
 
 
 class PaceError(openf1.OpenF1Error):
@@ -198,6 +197,24 @@ def _parse_drivers(rows: Iterable[dict[str, Any]]) -> dict[int, Driver]:
     }
 
 
+def favourite_matcher(favourites: Favourites) -> Callable[[Driver], bool]:
+    """Whether an OpenF1 driver is a favourite: OpenF1 has no Jolpica ids, so a driver counts
+    when a favourite driver's alias is in their full name ("George RUSSELL") or a favourite
+    team's alias is in their team name ("Haas F1 Team")."""
+    teams = [a for t in favourites.teams for a in t.aliases]
+    drivers = [a for d in favourites.drivers for a in d.aliases]
+    team_pattern = term_pattern(teams) if teams else None
+    driver_pattern = term_pattern(drivers) if drivers else None
+
+    def matches(driver: Driver) -> bool:
+        return bool(
+            (team_pattern and team_pattern.search(driver.team))
+            or (driver_pattern and driver_pattern.search(driver.name))
+        )
+
+    return matches
+
+
 def build_report(
     session: dict[str, Any],
     drivers_rows: list[dict[str, Any]],
@@ -205,8 +222,7 @@ def build_report(
     stints_rows: list[dict[str, Any]],
     race_control_rows: list[dict[str, Any]],
     result_rows: list[dict[str, Any]],
-    favourite_team: str = FAVOURITE_TEAM,
-    favourite_drivers: Sequence[str] = FAVOURITE_DRIVERS,
+    favourites: Favourites,
 ) -> PaceReport:
     try:
         drivers = _parse_drivers(drivers_rows)
@@ -242,13 +258,10 @@ def build_report(
     )
     with_pace = [p for p in leaders if p.median is not None]
     reference = min(with_pace, key=lambda p: p.median) if with_pace else None
-    favourites = tuple(
+    is_favourite = favourite_matcher(favourites)
+    chosen = tuple(
         sorted(
-            (
-                p
-                for p in paces.values()
-                if p.driver.team == favourite_team or p.driver.code in favourite_drivers
-            ),
+            (p for p in paces.values() if is_favourite(p.driver)),
             key=lambda p: (p.position is None, p.position or 0, p.driver.code),
         )
     )
@@ -259,7 +272,7 @@ def build_report(
         neutralised_laps=neutral,
         reference=reference,
         leaders=leaders,
-        favourites=favourites,
+        favourites=chosen,
     )
 
 
@@ -276,7 +289,9 @@ def last_race_session(sessions: Iterable[dict[str, Any]], now: datetime) -> dict
     return max(finished, key=lambda s: s["date_end"], default=None)
 
 
-def fetch_report(now: datetime, client: httpx.Client | None = None, **kwargs: Any) -> PaceReport:
+def fetch_report(
+    now: datetime, favourites: Favourites, client: httpx.Client | None = None, **kwargs: Any
+) -> PaceReport:
     """Pace report for the last finished race (this season, else the previous one)."""
 
     def rows(endpoint: str, **params: Any) -> list[dict[str, Any]]:
@@ -298,6 +313,7 @@ def fetch_report(now: datetime, client: httpx.Client | None = None, **kwargs: An
         rows("stints", session_key=key),
         rows("race_control", session_key=key),
         rows("session_result", session_key=key),
+        favourites,
     )
 
 

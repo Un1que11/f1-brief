@@ -13,11 +13,14 @@ from f1brief.drivers import (
     compare_rounds,
     fetch_driver_form,
     format_driver_form,
+    share_head_to_heads,
 )
 from f1brief.form import FormError, build_rounds, parse_results
 
 # Recorded 2026-10-15 (R1-R17): /2026/drivers/{id}/results and /2026/constructors/{id}/...
 DRIVER_FIXTURES = {d: f"jolpica/{d}_results_2026.json" for d in ("russell", "ocon", "lawson")}
+# Bearman drove only for Haas, so the Haas results stand in for his own.
+DRIVER_FIXTURES["bearman"] = "jolpica/haas_results_2026.json"
 TEAMS = ("mercedes", "haas", "rb", "red_bull")
 
 
@@ -146,6 +149,49 @@ def test_format_driver_form() -> None:
     assert "Qualifying head-to-head: 0-4 (1 undecided)" in text
     assert "Race head-to-head: 2-3" in text
     assert text.endswith("Source: Jolpica-F1.")
+
+
+def test_teammate_favourites_share_one_head_to_head() -> None:
+    ocon, russell, bearman = share_head_to_heads(
+        [form_for("ocon", 5), form_for("russell", 5), form_for("bearman", 5)]
+    )
+
+    # Listed first, Ocon keeps the comparison with Bearman exactly as before.
+    assert ocon == form_for("ocon", 5)
+    assert russell == form_for("russell", 5)
+    # Bearman's rounds against Ocon are marked shared and leave his head-to-head.
+    assert all(r.shared for r in bearman.rounds)
+    assert bearman.shared_with() == ["Esteban Ocon"]
+    assert bearman.qualifying_head_to_head == HeadToHead(0, 0, 0)
+    assert bearman.race_head_to_head == HeadToHead(0, 0, 0)
+    assert bearman.teammate_points == Decimal(0)
+    # His own results stay: 2 points over the five rounds (Ocon's teammate points above).
+    assert bearman.points == Decimal("2")
+    assert bearman.teammates() == ["Esteban Ocon"]
+
+
+def test_sharing_depends_on_the_order_and_only_on_teammates() -> None:
+    bearman, ocon = share_head_to_heads([form_for("bearman", 5), form_for("ocon", 5)])
+
+    assert not any(r.shared for r in bearman.rounds)
+    assert all(r.shared for r in ocon.rounds)
+    # Lawson's teammates (Hadjar, Lindblad) are not favourites: nothing is shared.
+    (lawson,) = share_head_to_heads([form_for("lawson", 7)])
+    assert not any(r.shared for r in lawson.rounds)
+
+
+def test_format_a_shared_head_to_head() -> None:
+    _, bearman = share_head_to_heads([form_for("ocon", 5), form_for("bearman", 5)])
+    text = format_driver_form(bearman)
+
+    assert (
+        "  R14 Spanish Grand Prix (Haas F1 Team): quali -; race P16 (vs OCO: see above); 0 pts"
+        in text
+    )
+    assert "Qualifying head-to-head, shared rounds excluded: 0-0" in text
+    assert "Head-to-head with Esteban Ocon (5 shared rounds): shown once, in their form above" in (
+        text
+    )
 
 
 def test_format_retirement_and_empty_form() -> None:

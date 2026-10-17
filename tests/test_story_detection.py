@@ -469,7 +469,12 @@ def run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """`f1brief detect-stories` with stubbed news and a stubbed `claude -p`."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(news, "FAVOURITES", {"Ocon": ("Ocon",)})
+    # Only Ocon is a favourite: the McLaren upgrade is not about anyone watched.
+    (tmp_path / "config.toml").write_text(
+        '[favourites]\nteams = []\n[[favourites.drivers]]\nid = "ocon"\nname = "Esteban Ocon"\n'
+        'aliases = ["Ocon"]\n',
+        encoding="utf-8",
+    )
     feed = [OCON_SEAT, MCLAREN_UPGRADE]
     monkeypatch.setattr(
         news, "fetch_news", lambda since, *a, **k: NewsReport(since, tuple(feed), ())

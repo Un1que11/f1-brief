@@ -23,8 +23,12 @@ chat id stay in `.env`. Without the file the built-in defaults (identical to the
 file) apply; a file with a typo or a bad value is an error, not ignored. Use another file with
 `uv run f1brief --config PATH <command>` and check what is in effect with `uv run f1brief config`.
 
-Today `due` and `run` take their `--days-before` default from `digest.days_before_fp1`; the
-collectors switch to the favourites lists in F20.
+`due` and `run` take their `--days-before` default from `digest.days_before_fp1`. Every
+collector iterates over the favourites lists: team form for each favourite team, driver form
+with the teammate comparison for each favourite driver, pace, track history, news tags and story
+detection. When two favourite drivers are teammates (Ocon and Bearman at Haas), their
+head-to-head is shown once, under the one listed first. News about the future in F1 (contract,
+moves) is flagged for the drivers with `track_future = true`.
 
 ## Run
 
@@ -34,8 +38,8 @@ uv run f1brief config            # the settings in effect (config.toml or the de
 uv run f1brief next              # next race weekend, session times in Europe/Warsaw
 uv run f1brief next --season 2027
 uv run f1brief standings         # standings + changes since the previous round
-uv run f1brief form --last 5     # McLaren race/qualifying form over the last 5 rounds
-uv run f1brief drivers           # Russell and Ocon form vs their teammates
+uv run f1brief form --last 5     # the favourite teams' race/qualifying form, last 5 rounds
+uv run f1brief drivers           # the favourite drivers' form vs their teammates
 uv run f1brief pace              # long-run pace in the last race: favourites vs leaders
 uv run f1brief track             # favourites at the next race's circuit, last 3 editions
 uv run f1brief news --days 7     # news about the favourites and key topics (RSS)

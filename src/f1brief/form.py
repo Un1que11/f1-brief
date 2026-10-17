@@ -264,7 +264,7 @@ def fetch_constructor_rounds(
 
 
 def fetch_team_form(
-    constructor_id: str = "mclaren",
+    constructor_id: str,
     last: int = DEFAULT_ROUNDS,
     season: int | str = "current",
     client: httpx.Client | None = None,

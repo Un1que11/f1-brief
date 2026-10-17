@@ -33,7 +33,7 @@ def news_item(title: str, link: str, published: datetime) -> NewsItem:
         sources=("BBC Sport",),
         favourites=frozenset({"Ocon"}),
         topics=frozenset({"contracts"}),
-        ocon_future=True,
+        future=True,
     )
 
 

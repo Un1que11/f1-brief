@@ -28,7 +28,7 @@
 - [x] F19. Optional: a short message after qualifying — the favourites' grid positions and what they mean for the race.
 
 ## Phase 5 — favourites as config + hot stories (see "Hot stories" in CLAUDE.md)
-- [ ] F20. Favourites from `config.toml` everywhere: replace the hardcoded McLaren/Russell/Ocon constants in form, drivers, pace, track_history, news and cli with config lists; add Haas and Bearman. Teammate comparison must work when two favourites are teammates (Ocon and Bearman at Haas): show the head-to-head once, not twice. Depends on F2.
+- [x] F20. Favourites from `config.toml` everywhere: replace the hardcoded McLaren/Russell/Ocon constants in form, drivers, pace, track_history, news and cli with config lists; add Haas and Bearman. Teammate comparison must work when two favourites are teammates (Ocon and Bearman at Haas): show the head-to-head once, not twice. Depends on F2.
 - [x] F21. Stories store: SQLite schema and repository for stories, story_entities, story_updates, subscriptions (as in CLAUDE.md), with migrations and tests.
 - [x] F22. Story detection: pick hot items from the F10 news, send only new items plus existing stories to `claude -p`, parse its JSON (attach / new story / ignore), reject any story or update without a source URL. Tests with fixture news and a stubbed `claude -p`.
 - [ ] F23. Interactive Telegram bot: long-polling `getUpdates` listener (separate process under launchd KeepAlive), inline buttons "Следить" / "Отписаться" / "Следить за Bearman, Haas", commands /stories, /story, /follow, /unfollow, /mute, /archive. Only accept updates from the configured chat_id. Tests on recorded update payloads.

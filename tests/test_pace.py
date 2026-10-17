@@ -7,6 +7,7 @@ import pytest
 from conftest import openf1_fixture
 
 from f1brief import openf1
+from f1brief.config import DEFAULT_FAVOURITES, Favourite, Favourites
 from f1brief.pace import (
     Driver,
     Lap,
@@ -37,6 +38,7 @@ def singapore_report():
         openf1_fixture("stints_11388"),
         openf1_fixture("race_control_11388"),
         openf1_fixture("session_result_11388"),
+        DEFAULT_FAVOURITES,
     )
 
 
@@ -115,11 +117,13 @@ def test_singapore_report_leaders_and_favourites() -> None:
     assert leaders["VER"].median == Decimal("97.300")
     assert leaders["LEC"].median == Decimal("97.220")
     assert report.reference.driver.code == "LEC"
-    assert list(favourites) == ["NOR", "PIA", "RUS", "OCO"]
+    # McLaren and Haas (with Bearman) as teams, Russell and Ocon as drivers.
+    assert list(favourites) == ["NOR", "PIA", "RUS", "BEA", "OCO"]
     assert {code: report.delta(p) for code, p in favourites.items()} == {
         "NOR": Decimal("0.677"),
         "PIA": Decimal("0.849"),
         "RUS": Decimal("1.527"),
+        "BEA": Decimal("1.985"),
         "OCO": Decimal("2.032"),
     }
     # 62 laps - lap 1 - 6 neutralised - pit in and out laps = 53 for a one-stop.
@@ -135,11 +139,26 @@ def test_favourites_can_be_changed() -> None:
         openf1_fixture("stints_11388"),
         openf1_fixture("race_control_11388"),
         openf1_fixture("session_result_11388"),
-        favourite_team="Ferrari",
-        favourite_drivers=(),
+        Favourites(
+            teams=(Favourite("ferrari", "Ferrari"),),
+            drivers=(Favourite("albon", "Alexander Albon", ("Albon",)),),
+        ),
     )
 
-    assert [p.driver.code for p in report.favourites] == ["LEC", "HAM"]
+    assert [p.driver.code for p in report.favourites] == ["LEC", "HAM", "ALB"]
+
+
+def test_favourites_are_matched_by_alias_in_openf1_names() -> None:
+    from f1brief.pace import favourite_matcher
+
+    is_favourite = favourite_matcher(DEFAULT_FAVOURITES)
+
+    # OpenF1 writes surnames in capitals and calls the team "Haas F1 Team".
+    assert is_favourite(Driver(87, "BEA", "Oliver BEARMAN", "Haas F1 Team"))
+    assert is_favourite(Driver(63, "RUS", "George RUSSELL", "Mercedes"))
+    assert is_favourite(Driver(81, "PIA", "Oscar PIASTRI", "McLaren"))
+    assert not is_favourite(Driver(16, "LEC", "Charles LECLERC", "Ferrari"))
+    assert not favourite_matcher(Favourites((), ()))(Driver(63, "RUS", "George RUSSELL", "M"))
 
 
 def test_malformed_data_raises() -> None:
@@ -147,7 +166,15 @@ def test_malformed_data_raises() -> None:
     laps[0] = {"lap_number": 1}
 
     with pytest.raises(PaceError):
-        build_report(singapore_session(), openf1_fixture("drivers_11388"), laps, [], [], [])
+        build_report(
+            singapore_session(),
+            openf1_fixture("drivers_11388"),
+            laps,
+            [],
+            [],
+            [],
+            Favourites((), ()),
+        )
 
 
 def test_last_race_session() -> None:
@@ -234,7 +261,7 @@ def test_fetch_report_for_last_race() -> None:
     seen: list[str] = []
 
     with httpx.Client(transport=_transport(_routes(), seen)) as client:
-        report = fetch_report(datetime(2026, 10, 15, tzinfo=UTC), client=client)
+        report = fetch_report(datetime(2026, 10, 15, tzinfo=UTC), DEFAULT_FAVOURITES, client=client)
 
     assert report.session_key == SINGAPORE
     assert seen == ["sessions", "drivers", "laps", "stints", "race_control", "session_result"]
@@ -247,7 +274,7 @@ def test_fetch_report_falls_back_to_previous_season_then_fails() -> None:
         httpx.Client(transport=_transport({}, seen)) as client,
         pytest.raises(PaceError, match="no finished race"),
     ):
-        fetch_report(datetime(2027, 2, 1, tzinfo=UTC), client=client)
+        fetch_report(datetime(2027, 2, 1, tzinfo=UTC), DEFAULT_FAVOURITES, client=client)
 
     assert seen == ["sessions", "sessions"]
 

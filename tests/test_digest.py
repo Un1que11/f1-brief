@@ -11,6 +11,7 @@ import pytest
 
 from f1brief import digest, facts
 from f1brief.cli import main
+from f1brief.config import DEFAULT_FAVOURITES
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 FACTS_BLOCK = re.compile(r"<facts>\n(.*)\n</facts>", re.DOTALL)
@@ -35,7 +36,7 @@ NAME_KEYS = {
 @pytest.fixture(scope="module")
 def document() -> dict[str, Any]:
     with facts_transport.client([]) as client:
-        return facts.collect(NOW, client, sleep=lambda _: None)
+        return facts.collect(NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None)
 
 
 def names(value: Any, key: str | None = None) -> Iterator[str]:
@@ -73,8 +74,8 @@ def test_prompt_is_the_fixed_template_plus_the_document(document: dict[str, Any]
     "text", [digest.template(), digest.SYSTEM_PROMPT], ids=["template", "system prompt"]
 )
 def test_nothing_factual_outside_the_document(document: dict[str, Any], text: str) -> None:
-    known = set(names(document)) | set(document["favourites"]["drivers"])
-    known.add(document["favourites"]["team"])
+    favourites = document["favourites"]["teams"] + document["favourites"]["drivers"]
+    known = set(names(document)) | {f[k] for f in favourites for k in ("id", "name")}
     assert len(known) > 50  # the check below really covers drivers, teams, places, sources
 
     leaked = [n for n in known if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
@@ -136,8 +137,8 @@ def test_summary_prompt_is_its_own_template_plus_the_document() -> None:
     ids=["template", "system prompt"],
 )
 def test_nothing_factual_outside_the_summary_document(document: dict[str, Any], text: str) -> None:
-    known = set(names(document)) | set(document["favourites"]["drivers"])
-    known.add(document["favourites"]["team"])
+    favourites = document["favourites"]["teams"] + document["favourites"]["drivers"]
+    known = set(names(document)) | {f[k] for f in favourites for k in ("id", "name")}
     leaked = [n for n in known if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
     assert leaked == []
     unnumbered = re.sub(r"^\d+\. ", "", text, flags=re.MULTILINE)
@@ -302,12 +303,14 @@ def test_cli_collects_when_no_document_is_given(
     from f1brief import cli
 
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now: STUB)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites: STUB)
 
     assert main(["digest", "--prompt-only"]) == 0
     assert facts_of(capsys.readouterr().out) == STUB
 
-    monkeypatch.setattr(facts, "collect", lambda now: {"sections": {"race": None}, "missing": []})
+    monkeypatch.setattr(
+        facts, "collect", lambda now, favourites: {"sections": {"race": None}, "missing": []}
+    )
     assert main(["digest", "--prompt-only"]) == 1
 
 
@@ -365,8 +368,8 @@ def test_qualifying_prompt_is_its_own_template_plus_the_document() -> None:
 def test_nothing_factual_outside_the_qualifying_document(
     document: dict[str, Any], text: str
 ) -> None:
-    known = set(names(document)) | set(document["favourites"]["drivers"])
-    known.add(document["favourites"]["team"])
+    favourites = document["favourites"]["teams"] + document["favourites"]["drivers"]
+    known = set(names(document)) | {f[k] for f in favourites for k in ("id", "name")}
     leaked = [n for n in known if re.search(rf"\b{re.escape(n)}\b", text, re.IGNORECASE)]
     assert leaked == []
     unnumbered = re.sub(r"^\d+\. ", "", text, flags=re.MULTILINE)

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from f1brief import __version__
@@ -105,8 +107,13 @@ def test_form_prints_team_form(
     monkeypatch.setattr(form, "fetch_team_form", fake_fetch)
 
     assert main(["form", "--last", "3"]) == 0
-    assert calls == [("mclaren", 3, "current")]
+    # Every favourite team in the config, in its order.
+    assert calls == [("mclaren", 3, "current"), ("haas", 3, "current")]
     assert capsys.readouterr().out.startswith("McLaren form, last 3 rounds")
+
+    calls.clear()
+    assert main(["form", "--team", "ferrari", "--last", "3"]) == 0
+    assert calls == [("ferrari", 3, "current")]
 
 
 def test_form_rejects_non_positive_last(capsys: pytest.CaptureFixture[str]) -> None:
@@ -142,10 +149,53 @@ def test_drivers_defaults_to_favourites(
     monkeypatch.setattr(drivers, "fetch_driver_form", fake_fetch)
 
     assert main(["drivers"]) == 0
-    assert calls == [("russell", 5, "current"), ("ocon", 5, "current")]
+    assert calls == [("russell", 5, "current"), ("ocon", 5, "current"), ("bearman", 5, "current")]
     assert capsys.readouterr().out == (
-        "Russell: no races in the selected period.\n\nOcon: no races in the selected period.\n"
+        "Russell: no races in the selected period.\n\nOcon: no races in the selected period."
+        "\n\nBearman: no races in the selected period.\n"
     )
+
+
+def test_the_favourites_come_from_the_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from f1brief import drivers, form
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[[favourites.teams]]\nid = "williams"\nname = "Williams"\n'
+        '[[favourites.drivers]]\nid = "albon"\nname = "Alexander Albon"\n',
+        encoding="utf-8",
+    )
+    teams: list[str] = []
+    driver_ids: list[str] = []
+    monkeypatch.setattr(
+        form,
+        "fetch_team_form",
+        lambda team, last, season: teams.append(team) or form.TeamForm(team, team, ()),
+    )
+    monkeypatch.setattr(
+        drivers,
+        "fetch_driver_form",
+        lambda d, last, season: driver_ids.append(d) or drivers.DriverForm(d, d, ()),
+    )
+
+    assert main(["--config", str(path), "form"]) == 0
+    assert main(["--config", str(path), "drivers"]) == 0
+    assert (teams, driver_ids) == (["williams"], ["albon"])
+
+
+def test_no_favourites_in_the_config_asks_for_ids(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[favourites]\nteams = []\ndrivers = []\n", encoding="utf-8")
+
+    assert main(["--config", str(path), "form"]) == 2
+    assert main(["--config", str(path), "drivers"]) == 2
+    err = capsys.readouterr().err
+    assert "pass --team" in err
+    assert "pass --driver" in err
 
 
 def test_drivers_accepts_repeated_driver_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +240,7 @@ def test_pace_prints_report(
     report = singapore_report()
     seen: list[datetime] = []
     monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 15, tzinfo=UTC))
-    monkeypatch.setattr(pace, "fetch_report", lambda now: seen.append(now) or report)
+    monkeypatch.setattr(pace, "fetch_report", lambda now, favourites: seen.append(now) or report)
 
     assert main(["pace"]) == 0
     assert seen == [datetime(2026, 10, 15, tzinfo=UTC)]
@@ -202,7 +252,7 @@ def test_pace_reports_fetch_failure(
 ) -> None:
     from f1brief import pace
 
-    def boom(now: object) -> None:
+    def boom(now: object, favourites: object) -> None:
         raise pace.PaceError("network down")
 
     monkeypatch.setattr(pace, "fetch_report", boom)
@@ -226,7 +276,9 @@ def test_track_defaults_to_next_race_circuit(
     monkeypatch.setattr(
         track_history,
         "fetch_track_history",
-        lambda circuit, before, count: calls.append((circuit, before, count)) or austin(),
+        lambda circuit, before, favourites, count: (
+            calls.append((circuit, before, count)) or austin()
+        ),
     )
 
     assert main(["track"]) == 0
@@ -247,7 +299,9 @@ def test_track_with_explicit_circuit_uses_today(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         track_history,
         "fetch_track_history",
-        lambda circuit, before, count: calls.append((circuit, before, count)) or austin(),
+        lambda circuit, before, favourites, count: (
+            calls.append((circuit, before, count)) or austin()
+        ),
     )
 
     assert main(["track", "--circuit", "monaco", "--editions", "2"]) == 0
@@ -259,7 +313,7 @@ def test_track_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
 
     assert main(["track", "--circuit", "x", "--editions", "0"]) == 2
 
-    def boom(circuit: str, before: object, count: int) -> None:
+    def boom(circuit: str, before: object, favourites: object, count: int) -> None:
         raise form.FormError("network down")
 
     monkeypatch.setattr(track_history, "fetch_track_history", boom)
@@ -279,7 +333,9 @@ def test_news_uses_window_and_prints(
     monkeypatch.setattr(
         news,
         "fetch_news",
-        lambda since: seen.append(since) or news.NewsReport(since=since, items=(), failed_feeds=()),
+        lambda since, favourites: (
+            seen.append(since) or news.NewsReport(since=since, items=(), failed_feeds=())
+        ),
     )
 
     assert main(["news", "--days", "3"]) == 0
@@ -292,7 +348,7 @@ def test_news_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixt
 
     assert main(["news", "--days", "0"]) == 2
 
-    def boom(since: object) -> None:
+    def boom(since: object, favourites: object) -> None:
         raise news.NewsError("no feed could be read")
 
     monkeypatch.setattr(news, "fetch_news", boom)

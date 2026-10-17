@@ -25,8 +25,10 @@ Write a short message from it for one reader, who gets it on Telegram before the
    for that driver at this race; if one does, say what it reports, as reported. A penalty an
    item expects at a later race does not apply to this one. Never invent a penalty.
 7. The favourites are the drivers with `favourite: true` in `qualifying.classification`, listed
-   in `qualifying.favourites` with their teammate. Call them by the names the document gives
-   them. A driver in `favourite_drivers_not_classified` has no qualifying result: say so.
+   in `qualifying.favourites` with their teammate. When two favourites are teammates, the
+   second one has `head_to_head_in` instead of the comparison: compare them once. Call them
+   by the names the document gives them. A driver in `favourite_drivers_not_classified` has
+   no qualifying result: say so.
 8. In `drivers`, each round's `grid` and `finish` show how the favourite driver's recent
    starting positions turned into results; points there are Grand Prix points only.
 

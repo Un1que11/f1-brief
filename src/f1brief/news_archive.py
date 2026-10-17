@@ -4,9 +4,9 @@ RSS feeds carry only their latest items, often a week or less. The off-season su
 covers a whole month, so every off-season run adds the relevant items it fetched here, and the
 summary reads them back for its period.
 
-Boolean tags of an item (today only `ocon_future`) are stored as a JSON list of names in
-`flags`, not as one column each, so that new ones (F20: the future of any favourite driver)
-need no schema change. Names this version does not know are ignored when reading.
+Boolean tags of an item (today only `future`) are stored as a JSON list of names in `flags`,
+not as one column each, so that new ones need no schema change. Names this version does not
+know are ignored when reading; `ocon_future`, the name before F20, still reads as `future`.
 """
 
 import json
@@ -37,7 +37,9 @@ _COLUMNS = "link, title, published, summary, sources, favourites, topics, flags,
 _MARKS = ", ".join("?" * len(_COLUMNS.split(", ")))
 
 # Boolean `NewsItem` fields kept in `flags`.
-_FLAGS = ("ocon_future",)
+_FLAGS = ("future",)
+# Flags stored under an earlier name: before F20 only Ocon's future was tracked.
+_OLD_FLAGS = {"ocon_future": "future"}
 
 # The first version (F18) had an `ocon_future INTEGER` column instead of `flags`.
 _MIGRATE_OCON_FUTURE = (
@@ -139,7 +141,12 @@ class NewsArchive:
                 sources=tuple(json.loads(sources)),
                 favourites=frozenset(json.loads(favourites)),
                 topics=frozenset(json.loads(topics)),
-                **{f: f in json.loads(flags) for f in _FLAGS},
+                **_flags(json.loads(flags)),
             )
             for title, link, published, summary, sources, favourites, topics, flags in rows
         ]
+
+
+def _flags(stored: list[str]) -> dict[str, bool]:
+    names = {_OLD_FLAGS.get(name, name) for name in stored}
+    return {f: f in names for f in _FLAGS}

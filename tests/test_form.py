@@ -213,7 +213,7 @@ def test_fetch_team_form_within_season(mclaren_2026: Payloads) -> None:
     transport = _transport(_routes("current", mclaren_2026), seen)
 
     with httpx.Client(transport=transport) as client:
-        form = fetch_team_form(client=client)
+        form = fetch_team_form("mclaren", client=client)
 
     assert form.constructor_name == "McLaren"
     assert [r.round for r in form.rounds] == [13, 14, 15, 16, 17]
@@ -234,7 +234,7 @@ def test_fetch_team_form_reaches_into_previous_season(
     )
 
     with httpx.Client(transport=transport) as client:
-        form = fetch_team_form(last=5, client=client)
+        form = fetch_team_form("mclaren", last=5, client=client)
 
     assert [(r.season, r.round) for r in form.rounds] == [
         (2025, 22),
@@ -248,11 +248,11 @@ def test_fetch_team_form_reaches_into_previous_season(
 
 def test_fetch_team_form_rejects_non_positive_last() -> None:
     with pytest.raises(ValueError):
-        fetch_team_form(last=0)
+        fetch_team_form("mclaren", last=0)
 
 
 def test_fetch_error_is_form_error() -> None:
     transport = httpx.MockTransport(lambda request: httpx.Response(502))
 
     with httpx.Client(transport=transport) as client, pytest.raises(FormError, match="502"):
-        fetch_team_form(client=client)
+        fetch_team_form("mclaren", client=client)
