@@ -90,7 +90,35 @@ RUSSELL, OCON, BEARMAN = "George Russell", "Esteban Ocon", "Oliver Bearman"
     ],
 )
 def test_classify(title: str, summary: str, favourites: set, topics: set, future: bool) -> None:
-    assert classify(title, summary, FAVS) == (frozenset(favourites), frozenset(topics), future)
+    assert classify(title, summary, FAVS, 2026) == (
+        frozenset(favourites),
+        frozenset(topics),
+        future,
+    )
+
+
+def test_a_year_is_future_wording_only_when_after_the_items_own_year() -> None:
+    items = {
+        i.link.rsplit("/", 1)[1]: i for i in parse_feed(feed_bytes("years_like.xml"), "Y", FAVS)
+    }
+
+    # Published in 2027: "the 2027 Haas" is this season's car, not Ocon's future.
+    assert not items["ocon-2027-car"].future
+    # Published in 2027 and naming 2028: what comes next for him.
+    assert items["ocon-2028"].future
+    # Published in December 2026: 2027 is the next season.
+    assert items["ocon-ahead"].future
+
+
+def test_an_undated_item_takes_its_year_from_now() -> None:
+    feed = (
+        b'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>'
+        b"<item><title>Ocon looks ahead to 2027</title><link>https://example.test/u</link>"
+        b"</item></channel></rss>"
+    )
+
+    assert parse_feed(feed, "U", FAVS, now=datetime(2026, 10, 17, tzinfo=UTC))[0].future
+    assert not parse_feed(feed, "U", FAVS, now=datetime(2027, 3, 1, tzinfo=UTC))[0].future
 
 
 def test_classify_uses_the_favourites_it_is_given() -> None:

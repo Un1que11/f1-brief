@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic feed in the BBC format (see bbc_like.xml) for future-season wording: a year is
+     about a favourite's future only when it comes after the item's own year. Headlines
+     invented. -->
+<rss version="2.0">
+  <channel>
+    <title>Years (synthetic)</title>
+    <link>https://example.test/years</link>
+    <description>Synthetic test feed</description>
+    <item>
+      <title>Ocon happy with the 2027 Haas after first laps</title>
+      <link>https://example.test/years/ocon-2027-car</link>
+      <guid isPermaLink="false">years-1</guid>
+      <description>A clean opening day in Bahrain.</description>
+      <pubDate>Thu, 25 Feb 2027 18:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Ocon linked with 2028 Alpine return</title>
+      <link>https://example.test/years/ocon-2028</link>
+      <guid isPermaLink="false">years-2</guid>
+      <description>Talks are said to be at an early stage.</description>
+      <pubDate>Thu, 25 Feb 2027 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Ocon looks ahead to 2027 after Abu Dhabi</title>
+      <link>https://example.test/years/ocon-ahead</link>
+      <guid isPermaLink="false">years-3</guid>
+      <description>Thoughts after the race.</description>
+      <pubDate>Sun, 06 Dec 2026 20:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

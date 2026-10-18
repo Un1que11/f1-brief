@@ -96,9 +96,10 @@ TOPICS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# A favourite's future: wording about contracts, seats or what comes next for them. Checked
-# only for the favourites with `track_future` in the config.
-FUTURE_TERMS = TOPICS["contracts"] + ("future", "career", "next season", "2027")
+# A favourite's future: wording about contracts, seats or what comes next for them, or a
+# season after the item's own year (see `_names_a_later_season`). Checked only for the
+# favourites with `track_future` in the config.
+FUTURE_TERMS = TOPICS["contracts"] + ("future", "career", "next season")
 
 USER_AGENT = "f1brief (+https://github.com/Un1que11/f1-brief)"
 
@@ -115,6 +116,13 @@ def term_pattern(terms: Iterable[str]) -> re.Pattern[str]:
 
 _TOPIC_PATTERNS = {name: term_pattern(terms) for name, terms in TOPICS.items()}
 _FUTURE = term_pattern(FUTURE_TERMS)
+_YEAR = re.compile(r"(?<!\w)(20\d\d)(?!\w)")
+
+
+def _names_a_later_season(text: str, year: int) -> bool:
+    """Whether the text names a year after `year` (the year the item was published): "for
+    2027" is about the future in 2026, but only a season preview once 2027 has come."""
+    return any(int(y) > year for y in _YEAR.findall(text))
 
 
 @cache
@@ -165,14 +173,18 @@ def _clean(text: str) -> str:
 
 
 def classify(
-    title: str, summary: str, favourites: Favourites
+    title: str, summary: str, favourites: Favourites, year: int | None = None
 ) -> tuple[frozenset[str], frozenset[str], bool]:
     """(favourites mentioned, topics matched, is about the future of a favourite whose future
-    is tracked)."""
+    is tracked). `year` is the year the item was published (default: the current UTC year);
+    a later year named in the text counts as future wording."""
     text = f"{title} {summary}"
     mentioned = [(n, f) for n, p, f in _favourite_patterns(favourites) if p.search(text)]
     topics = frozenset(n for n, p in _TOPIC_PATTERNS.items() if p.search(text))
-    future = any(tracked for _, tracked in mentioned) and bool(_FUTURE.search(text))
+    year = datetime.now(UTC).year if year is None else year
+    future = any(tracked for _, tracked in mentioned) and bool(
+        _FUTURE.search(text) or _names_a_later_season(text, year)
+    )
     return frozenset(n for n, _ in mentioned), topics, future
 
 
@@ -183,9 +195,12 @@ def _published(entry: Any) -> datetime | None:
     return datetime(*parsed[:6], tzinfo=UTC)
 
 
-def parse_feed(content: bytes, source: str, favourites: Favourites) -> list[NewsItem]:
+def parse_feed(
+    content: bytes, source: str, favourites: Favourites, now: datetime | None = None
+) -> list[NewsItem]:
     """Items of one feed (RSS or Atom), classified. Unrelated items are kept here; filtering
-    happens in `select`."""
+    happens in `select`. An undated item is classified as published at `now` (default: the
+    current time)."""
     parsed = feedparser.parse(content)
     # An HTML error page parses "successfully" with no entries; only a recognised RSS/Atom
     # document (feedparser sets `version`) or one with entries counts as a feed.
@@ -199,12 +214,14 @@ def parse_feed(content: bytes, source: str, favourites: Favourites) -> list[News
         if not title or not link:
             continue
         summary = _clean(entry.get("summary", ""))
-        mentioned, topics, future = classify(title, summary, favourites)
+        published = _published(entry)
+        year = (published or now or datetime.now(UTC)).year
+        mentioned, topics, future = classify(title, summary, favourites, year)
         items.append(
             NewsItem(
                 title=title,
                 link=link,
-                published=_published(entry),
+                published=published,
                 summary=summary,
                 sources=(source,),
                 favourites=mentioned,
