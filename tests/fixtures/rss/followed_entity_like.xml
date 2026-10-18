@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic feed in RSS 2.0 for story detection: an item about a non-favourite team that is
+     hot only through a team-principal headline (no news topic, no favourite), and an
+     unrelated item. Headlines invented. -->
+<rss version="2.0">
+  <channel>
+    <title>Synthetic F1 feed</title>
+    <link>https://example.test/feed</link>
+    <description>Synthetic test feed</description>
+    <item>
+      <title>Synthetic: Ferrari name a new team principal</title>
+      <link>https://example.test/feed/ferrari-boss</link>
+      <guid isPermaLink="false">syn-1</guid>
+      <description>Synthetic summary.</description>
+      <pubDate>Thu, 15 Oct 2026 07:15:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Synthetic: Ferrari reflect on the weekend</title>
+      <link>https://example.test/feed/ferrari-weekend</link>
+      <guid isPermaLink="false">syn-2</guid>
+      <description>Synthetic summary.</description>
+      <pubDate>Thu, 15 Oct 2026 06:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

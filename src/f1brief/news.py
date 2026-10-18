@@ -261,12 +261,15 @@ def deduplicate(items: Iterable[NewsItem]) -> list[NewsItem]:
     return list(merged.values())
 
 
-def select(items: Iterable[NewsItem], since: datetime) -> list[NewsItem]:
-    """Relevant items published since `since` (undated ones included), newest first."""
+def select(
+    items: Iterable[NewsItem], since: datetime, relevant_only: bool = True
+) -> list[NewsItem]:
+    """Items published since `since` (undated ones included), newest first: only the relevant
+    ones unless `relevant_only` is False."""
     chosen = [
         i
         for i in deduplicate(items)
-        if i.relevant and (i.published is None or i.published >= since)
+        if (i.relevant or not relevant_only) and (i.published is None or i.published >= since)
     ]
     return sorted(chosen, key=lambda i: (i.published is None, -(i.published or since).timestamp()))
 
@@ -276,8 +279,11 @@ def fetch_news(
     favourites: Favourites,
     feeds: Sequence[Feed] = FEEDS,
     client: httpx.Client | None = None,
+    relevant_only: bool = True,
 ) -> NewsReport:
-    """Fetches every feed; a feed that fails is listed in `failed_feeds` instead of failing all."""
+    """Fetches every feed; a feed that fails is listed in `failed_feeds` instead of failing all.
+    `relevant_only=False` keeps the items that name no favourite and match no topic too (story
+    detection applies its own, wider filter)."""
     if since.tzinfo is None:
         raise ValueError("since must be timezone-aware")
     owns_client = client is None
@@ -297,7 +303,8 @@ def fetch_news(
             client.close()
     if failed and len(failed) == len(feeds):
         raise NewsError(f"no feed could be read: {', '.join(failed)}")
-    return NewsReport(since=since, items=tuple(select(items, since)), failed_feeds=tuple(failed))
+    selected = select(items, since, relevant_only)
+    return NewsReport(since=since, items=tuple(selected), failed_feeds=tuple(failed))
 
 
 def default_since(now: datetime, days: int = 7) -> datetime:
