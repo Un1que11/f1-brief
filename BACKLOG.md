@@ -3,7 +3,7 @@
 ## Phase 1 — skeleton
 - [x] F1. Project with uv, ruff, pytest, `src/f1brief/` layout, README.
 - [x] F2. [light] `config.toml`: favourites (teams: McLaren, Haas; drivers: Russell, Ocon, Bearman — as lists), digest language, how many days before FP1 to send, time zone Europe/Warsaw.
-- [ ] F3. [light] GitHub Actions: ruff + pytest.
+- [x] F3. [light] GitHub Actions: ruff + pytest.
 
 ## Phase 2 — collecting facts (each collector returns a typed model; tests on fixtures)
 - [x] F4. Calendar and the next round (Jolpica), session schedule in Warsaw time.

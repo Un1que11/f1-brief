@@ -148,10 +148,14 @@ uv run ruff format --check
 uv run pytest
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`) runs the same three checks, after
+`uv sync --locked`, on every pull request and every push to `main`. The job uses no secrets.
+
 ## Layout
 
 ```
 src/f1brief/   application package
 tests/         pytest suite (no network: recorded fixtures only)
 tests/fixtures/  recorded API responses (e.g. jolpica/schedule_2026.json)
+.github/workflows/ci.yml  CI: ruff + pytest
 ```
