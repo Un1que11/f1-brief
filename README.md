@@ -61,6 +61,7 @@ uv run f1brief quali --round 17 --prompt-only   # the prompt of the message afte
 uv run f1brief quali                       # that message for the current weekend (never sent)
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
+uv run f1brief alerts --dry-run           # the story alerts due now (not sent)
 uv run f1brief launchd                    # the macOS LaunchAgent plist for `run` (printed)
 ```
 
@@ -134,8 +135,16 @@ checked before, with the open stories, to `claude -p` (prompt: `src/f1brief/stor
 For each item claude attaches it to a story, starts a new one or ignores it. The source of every
 story and update is the item's own URL, headline and outlet, never claude's; a decision naming
 no item sent is rejected. Answered items are not sent again. `--dry-run` shows the decisions
-and stores nothing, `--prompt-only` prints the prompt without running claude. Alerts come next
-(F24).
+and stores nothing, `--prompt-only` prints the prompt without running claude.
+
+Story alerts (F24): when a followed story gets an update (recorded after it was followed),
+`f1brief alerts` sends a short message with what changed, the source and an "Отписаться" button;
+a story's waiting updates go in one message. At most 3 alerts per Warsaw calendar day and none
+from 23:00 to 08:00 Warsaw: the rest wait for a later run, the oldest first. Updates of a muted
+story, and updates that have waited more than 3 days, are skipped (the digest covers them).
+`run` sends the due alerts at the end of every run, so under launchd they go out within the hour
+and the night's queue with the first run after 08:00. `alerts --dry-run` prints them and records
+nothing.
 
 `f1brief bot` (F23) is the Telegram bot for the stories: a long-polling listener that runs until
 stopped (meant for its own launchd job with `KeepAlive`). It answers only the chat in

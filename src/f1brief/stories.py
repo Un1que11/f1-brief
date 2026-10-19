@@ -6,7 +6,8 @@ The tables follow "Hot stories" in CLAUDE.md: `stories`, `story_entities`, `stor
 created together with its first update, so there is no story and no update without a source.
 A story's status changes only together with an update (`add_update(..., status=...)`).
 Unfollowing keeps the story and its timeline. `checked_news` lists the news links story
-detection (F22) has already looked at, so each article is judged once.
+detection (F22) has already looked at, so each article is judged once. `story_alerts` records
+which updates of followed stories an alert (F24) has sent or skipped.
 
 The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
 how many it has had in `schema_versions` (one row per part of the state file that migrates,
@@ -80,6 +81,19 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
             url TEXT NOT NULL PRIMARY KEY,
             checked_at TEXT NOT NULL
         )""",
+    ),
+    (
+        # One row per update an alert (F24) has dealt with: sent, or skipped (muted story,
+        # too old). One alert covers a story's waiting updates, so its rows share story_id
+        # and decided_at.
+        """CREATE TABLE story_alerts (
+            update_id INTEGER NOT NULL PRIMARY KEY
+                REFERENCES story_updates (id) ON DELETE CASCADE,
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            outcome TEXT NOT NULL CHECK (outcome IN ('sent', 'skipped')),
+            decided_at TEXT NOT NULL
+        )""",
+        "CREATE INDEX story_alerts_decided_at ON story_alerts (outcome, decided_at)",
     ),
 )
 
@@ -533,3 +547,44 @@ class StoryStore:
                 "INSERT OR IGNORE INTO checked_news (url, checked_at) VALUES (?, ?)",
                 [(url, checked_at) for url in urls],
             )
+
+    # --- alerts on followed stories ---------------------------------------------------------
+
+    def unalerted(self) -> list[StoryUpdate]:
+        """Updates of the stories followed now, recorded after they were followed, that no
+        alert has sent or skipped yet; oldest first."""
+        rows = self._execute(
+            f"SELECT {', '.join('u.' + c for c in _UPDATE_COLUMNS.split(', '))} "
+            "FROM story_updates u JOIN subscriptions sub ON sub.story_id = u.story_id "
+            "WHERE sub.active = 1 AND u.recorded_at > sub.followed_at "
+            "AND u.id NOT IN (SELECT update_id FROM story_alerts) "
+            "ORDER BY u.recorded_at, u.id"
+        )
+        return [_story_update(row) for row in rows]
+
+    def record_alert(self, updates: Sequence[StoryUpdate], sent: bool, now: datetime) -> None:
+        """Marks the updates as sent in one alert at `now`, or as skipped."""
+        outcome = "sent" if sent else "skipped"
+        decided = _stamp(now)
+        with self._transaction():
+            self._execute_many(
+                "INSERT INTO story_alerts (update_id, story_id, outcome, decided_at) "
+                "VALUES (?, ?, ?, ?)",
+                [(u.id, u.story_id, outcome, decided) for u in updates],
+            )
+
+    def forget_alert(self, updates: Sequence[StoryUpdate]) -> None:
+        """Makes the updates wait for an alert again (one that could not be delivered)."""
+        with self._transaction():
+            self._execute_many(
+                "DELETE FROM story_alerts WHERE update_id = ?", [(u.id,) for u in updates]
+            )
+
+    def alerts_sent(self, start: datetime, end: datetime) -> int:
+        """How many alerts were sent from `start` up to (not including) `end`."""
+        row = self._execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT story_id, decided_at FROM story_alerts "
+            "WHERE outcome = 'sent' AND decided_at >= ? AND decided_at < ?)",
+            (_stamp(start), _stamp(end)),
+        ).fetchone()
+        return row[0]

@@ -15,6 +15,7 @@ import httpx
 from f1brief import (
     __version__,
     after_qualifying,
+    alerts,
     bot,
     config,
     digest,
@@ -236,7 +237,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd = commands.add_parser(
         "run",
         help="the daily job: when the digest, the message after qualifying (or, in the "
-        "off-season, the monthly summary) is due, write it and send it, once",
+        "off-season, the monthly summary) is due, write it and send it, once; then send the "
+        "story alerts that are due",
     )
     add_days_before(run_cmd)
     add_state(run_cmd)
@@ -247,6 +249,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
     run_cmd.add_argument(
+        "--env-file",
+        default=telegram_send.DEFAULT_ENV_FILE,
+        metavar="PATH",
+        help=f"where to look for the Telegram settings (default: {telegram_send.DEFAULT_ENV_FILE})",
+    )
+
+    alerts_cmd = commands.add_parser(
+        "alerts",
+        help="send the alerts on followed stories that are due (none in the quiet hours "
+        "23:00-08:00 Warsaw, at most 3 a day; `run` does this too)",
+    )
+    alerts_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories (default: {send_log.DEFAULT_STATE_FILE})",
+    )
+    alerts_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the alerts that are due instead of sending them; records nothing, needs "
+        "no token",
+    )
+    alerts_cmd.add_argument(
         "--env-file",
         default=telegram_send.DEFAULT_ENV_FILE,
         metavar="PATH",
@@ -883,6 +909,47 @@ def _cmd_run(
     if days_before < 0:
         print("error: --days-before must not be negative", file=sys.stderr)
         return 2
+    code = _run_due(days_before, state, dry_run, model, env_file, favourites)
+    # Every run, whatever was due: alerts that waited for the morning go out with the first
+    # run after the quiet hours.
+    return max(code, _cmd_alerts(state, dry_run, env_file))
+
+
+def _cmd_alerts(state: str, dry_run: bool, env_file: str) -> int:
+    now = _now()
+    try:
+        with stories.StoryStore(state) as store:
+            planned = alerts.plan(store, now)
+            if not (planned.send or planned.waiting or planned.skip):
+                return 0
+            print(planned.describe(), file=sys.stderr)
+            if dry_run:
+                for alert in planned.send:
+                    for reply in alerts.replies(alert):
+                        _print_action(reply)
+                print("dry run: no alert sent, nothing recorded", file=sys.stderr)
+                return 0
+            if not planned.send:
+                alerts.deliver(store, planned, now, send=lambda reply: None)
+                return 0
+            credentials = telegram_send.load_credentials(env_file=env_file)
+            with _telegram_client() as client:
+                ok = alerts.deliver(store, planned, now, bot.BotApi(credentials, client).send)
+            return 0 if ok else 1
+    except (telegram_send.SendError, send_log.StateError, stories.StoryError) as exc:
+        print(f"error: story alerts: {exc}", file=sys.stderr)
+        return 1
+
+
+def _run_due(
+    days_before: int,
+    state: str,
+    dry_run: bool,
+    model: str | None,
+    env_file: str,
+    favourites: config.Favourites,
+) -> int:
+    """The digest, the message after qualifying or the monthly summary, whichever is due."""
     try:
         with send_log.SendLog(state) as log:
             races = _calendar()
@@ -1292,6 +1359,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_run(
             args.days_before, args.state, args.dry_run, args.model, args.env_file, favourites
         )
+    if args.command == "alerts":
+        return _cmd_alerts(args.state, args.dry_run, args.env_file)
     if args.command == "bot":
         return _cmd_bot(
             args.state, args.env_file, args.dry_run, args.updates, args.chat_id, settings
