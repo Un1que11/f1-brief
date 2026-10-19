@@ -38,6 +38,36 @@
 - [ ] F27. Seed story, created through the normal pipeline (not hardcoded): "Bearman to Ferrari in 2028 in place of Hamilton?" (status rumor), entities Bearman, Haas, Ferrari, Hamilton, followed by default. Sources to start from: https://www.gpfans.com/en/f1-news/1089724/new-lewis-hamilton-ferrari-contract-could-force-f1-star-to-leave-team/ and https://www.f1oversteer.com/news/ferrari-will-have-a-77-million-problem-if-they-replace-lewis-hamilton-with-oliver-bearman/ — check they still resolve; if not, mark BLOCKED and ask Misha for a link.
 - [ ] F28. Optional: a static HTML archive page generated locally (timeline per story, filters followed / all / resolved), opened from the `/archive` reply.
 
+## Phase 6 — languages and accounts (planned: don't start until Misha says so)
+- [ ] F29. Digest language: `ru`, `en`, `pl` for the existing global `[digest] language` (default `ru`). Prompt templates per language for the digest, the off-season summary and the post-qualifying message, all with the same facts-only and sources rules; a test that every language's template has the same sections and rules. Per-language name forms for drivers and teams (this covers the `name_ru` idea). Update CLAUDE.md where it says "in Russian".
+- [ ] F30. Bot UI and alert texts from a message catalog (ru / en / pl), using the global language until F34; dates, times and numbers formatted per locale (24-hour times, decimal comma for ru / pl); a test that every key exists in all three languages. Update "Bot commands (Russian UI)" in CLAUDE.md.
+- [ ] F31. Stories readable in any language: replace `title_ru` / `summary_ru` / `what_changed_ru` with language-neutral storage plus per-language texts, generated on demand by `claude -p` from the sourced update only and cached; migration for existing rows; the source URL stays the single source of truth. Depends on F29.
+- [ ] F32. Users instead of a single recipient:
+  - SQLite `users` (Telegram user id, chat_id, name, language, time zone, status active / blocked, created_at) and per-user settings (favourites, days before FP1, alert cap, quiet hours); `config.toml` keeps the defaults.
+  - Add `user_id` to `subscriptions`, `story_alerts` and the send logs (`sends`, `qualifying_sends`, `summaries`), and migrate the existing rows to Misha's account, which is created from the current config and `.env` chat_id.
+  - The "Следить за …" button writes to the pressing user's favourites instead of `config.toml`.
+  - The per-user time zone replaces the hardcoded Europe/Warsaw in the session schedule, the send window and the quiet hours, with a test for a non-Warsaw user (e.g. America/New_York) across a DST change.
+  - Update CLAUDE.md (goal, favourites, hot stories) to describe per-user behaviour.
+- [ ] F33. Sign-up and sign-in through the bot (the Telegram account is the identity, no passwords):
+  - `/start <invite code>` creates an account from a one-time code made by the admin with `/invite`. Codes expire after 7 days and are stored hashed. Without a valid code the bot answers politely and stores nothing.
+  - `/start` is accepted only in private chats, so a group can never become a user.
+  - The admin is Misha's Telegram user id from `.env`.
+  - Users manage their own `/language`, `/favourites` and `/settings`.
+  - `/delete_me` deletes the account and all its rows (subscriptions, alert queue, send logs), with a test that nothing is left behind.
+  - Depends on F30, F32.
+- [ ] F34. Per-user feeds:
+  - The send window, digest, off-season summary, post-qualifying message, story subscriptions, alerts, the "Твои сюжеты" section and the 60-day "unfollow?" offer all run per user, with that user's favourites, language and time zone.
+  - Facts are collected once per round and reused.
+  - Story detection still runs once per run, over the union of all active users' favourites and followed entities.
+  - The shared part of the digest is generated once per (language, favourites) combination. The per-user parts (the stories section, the schedule in the user's time zone, and news since that user's last digest) are built per user.
+  - A test that one user's subscriptions, stories and settings never leak into another user's messages.
+  - Depends on F29, F30, F31, F32.
+- [ ] F35. Access control and limits:
+  - Every bot handler and callback checks that the sender is an active user (replacing the single chat_id check).
+  - Per-user command rate limits; admin commands `/users` and `/block`; a configurable cap on the number of users.
+  - The README explains the cost: one `claude -p` call per (language, favourites) combination for the shared digest, plus the per-user parts and per-language story texts.
+  - Depends on F33.
+
 ## Ideas (proposed by night job)
 - Circuit facts as a cited section of the facts JSON (length, laps, corners, DRS zones, from a checked-in file with its source). Reason: digest section 5 asks for the track's character, but the JSON has nothing on it, so the generator can only say it is unknown.
 - After generation, check that every digest point cites a source name that appears in the facts JSON, and refuse to send a digest that fails. Reason: the prompt requires sources (F13), but nothing verifies that the model followed it.
