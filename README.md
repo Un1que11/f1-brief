@@ -61,6 +61,7 @@ uv run f1brief quali --round 17 --prompt-only   # the prompt of the message afte
 uv run f1brief quali                       # that message for the current weekend (never sent)
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
+uv run f1brief launchd                    # the macOS LaunchAgent plist for `run` (printed)
 ```
 
 `facts` is what the digest is generated from. Each section lists the exact requests it was
@@ -137,6 +138,45 @@ and stores nothing, `--prompt-only` prints the prompt without running claude. Th
 come next (F23–F24).
 
 `python -m f1brief` works too, from inside the virtual environment.
+
+## Schedule on the Mac (launchd)
+
+`run` is meant to be started by launchd every hour: it decides by itself whether anything is
+due and otherwise exits within seconds. Hourly rather than daily, because the message after
+qualifying is only due between two hours after qualifying starts and the race start. A run
+missed while the Mac sleeps is made up once when it wakes; nothing runs while it is off.
+
+Before installing, check by hand from the checkout that everything works: `uv sync`,
+`.env` filled in (see `send` above), `claude` logged in, then `uv run f1brief due` and
+`uv run f1brief run --dry-run`.
+
+Install (from the checkout):
+
+```bash
+uv run f1brief launchd --output ~/Library/LaunchAgents/local.f1brief.run.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.f1brief.run.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.f1brief.run.plist
+launchctl print gui/$(id -u)/local.f1brief.run | head -20   # loaded? last exit code?
+```
+
+`f1brief launchd` writes the plist for this checkout (`--workdir` for another one) and creates
+the log directory; without `--output` it only prints the plist. launchd starts jobs with a bare
+PATH and `/` as the working directory, so the plist holds the full path of `uv`, a PATH with
+the directories of `uv` and `claude` (found on your PATH now; `--uv` and `--claude` to give
+them) plus Homebrew's, and the checkout as the working directory, where `config.toml`, `.env`
+and `state.db` are read. It holds no secrets. If `claude` was installed with npm, `node` must
+be in one of those directories too. `--interval MINUTES` changes the hourly schedule.
+
+The job runs once right after `bootstrap`. Its output goes to `~/Library/Logs/f1brief/run.log`
+and errors to `run.err.log` there (`--log-dir` for another place); `tail -f` them, or start a
+run now with `launchctl kickstart gui/$(id -u)/local.f1brief.run`. After moving the checkout
+or reinstalling `uv` or `claude`, write the plist again and repeat the `bootout`/`bootstrap`
+lines. To uninstall:
+
+```bash
+launchctl bootout gui/$(id -u)/local.f1brief.run
+rm ~/Library/LaunchAgents/local.f1brief.run.plist
+```
 
 ## Checks
 
