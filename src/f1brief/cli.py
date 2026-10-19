@@ -1136,10 +1136,14 @@ def _cmd_bot(
             return 0
         credentials = telegram_send.load_credentials(env_file=env_file)
         timeout = httpx.Timeout(15.0, read=bot.POLL_TIMEOUT_S + 15.0)
-        with stories.StoryStore(state) as store, httpx.Client(timeout=timeout) as client:
+        with (
+            stories.StoryStore(state) as store,
+            bot.OffsetStore(state) as offsets,
+            httpx.Client(timeout=timeout) as client,
+        ):
             handler = bot.Bot(store, credentials.chat_id, settings.favourites, add_favourites)
             print("listening for updates (Ctrl-C to stop)", file=sys.stderr)
-            bot.listen(bot.BotApi(credentials, client), handler)
+            bot.listen(bot.BotApi(credentials, client), handler, offsets=offsets)
     except KeyboardInterrupt:
         return 0
     except json.JSONDecodeError as exc:

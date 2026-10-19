@@ -18,6 +18,7 @@ from f1brief import telegram_send as ts
 from f1brief.bot import Answer, Bot, Button, Reply
 from f1brief.cli import main
 from f1brief.config import Favourite
+from f1brief.send_log import StateError
 from f1brief.stories import Entity, EntityKind, StoryStatus, StoryStore, Update
 
 NOW = datetime(2026, 10, 19, 9, tzinfo=UTC)
@@ -660,6 +661,95 @@ def test_an_update_the_store_fails_on_is_skipped(handler: Bot) -> None:
     assert warnings[0].startswith("update not handled:")
 
 
+class TelegramQueue:
+    """A mock Bot API that keeps updates the way Telegram does: each poll gets the pending
+    updates from its offset on, and an offset forgets the updates before it."""
+
+    def __init__(self, pending: list[dict[str, Any]]) -> None:
+        self.pending = list(pending)
+        self.offsets: list[int | None] = []
+        self.messages = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if request.url.path.endswith("getUpdates"):
+            offset = body.get("offset")
+            self.offsets.append(offset)
+            if offset is not None:
+                self.pending = [u for u in self.pending if u["update_id"] >= offset]
+            return httpx.Response(200, json={"ok": True, "result": self.pending})
+        self.messages += request.url.path.endswith("sendMessage")
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+
+def test_a_restarted_listener_does_not_answer_an_update_again(
+    tmp_path: Path, store: StoryStore, handler: Bot
+) -> None:
+    telegram = TelegramQueue([message("/stories", update_id=20)])
+    client = httpx.Client(transport=httpx.MockTransport(telegram))
+    with bot.OffsetStore(tmp_path / "state.db") as offsets:
+        # Handles the update, then stops before a later poll could confirm it.
+        bot.listen(
+            bot.BotApi(ts.Credentials(TOKEN, CHAT), client), handler, polls=1, offsets=offsets
+        )
+    with bot.OffsetStore(tmp_path / "state.db") as offsets:
+        bot.listen(
+            bot.BotApi(ts.Credentials(TOKEN, CHAT), client), handler, polls=1, offsets=offsets
+        )
+
+    assert telegram.offsets == [None, 21]
+    assert telegram.messages == 1
+
+
+def test_the_offset_is_stored_before_the_batch_is_handled(
+    tmp_path: Path, store: StoryStore, handler: Bot
+) -> None:
+    stored: list[int | None] = []
+    offsets = bot.OffsetStore(tmp_path / "state.db")
+
+    def deliver_and_check(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("getUpdates"):
+            result = [message("/help", update_id=5), message("/help", update_id=6)]
+            return httpx.Response(200, json={"ok": True, "result": result})
+        stored.append(offsets.load())
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    client = httpx.Client(transport=httpx.MockTransport(deliver_and_check))
+    bot.listen(bot.BotApi(ts.Credentials(TOKEN, CHAT), client), handler, polls=1, offsets=offsets)
+    offsets.close()
+
+    assert stored == [7, 7]
+
+
+def test_an_offset_that_cannot_be_stored_is_reported_and_the_listener_goes_on(
+    tmp_path: Path, store: StoryStore, handler: Bot
+) -> None:
+    warnings: list[str] = []
+    offsets = bot.OffsetStore(tmp_path / "state.db")
+
+    def broken_save(offset: int) -> None:
+        raise StateError("state.db: disk I/O error")
+
+    offsets.save = broken_save  # type: ignore[method-assign]
+    mock = MockTelegram([[message("/help", update_id=8)], []])
+
+    bot.listen(api(mock), handler, warn=warnings.append, polls=2, offsets=offsets)
+
+    assert [body.get("offset") for body in mock.sent("getUpdates")] == [None, 9]
+    assert len(mock.sent("sendMessage")) == 1
+    assert warnings == ["offset not stored: state.db: disk I/O error"]
+    offsets.close()
+
+
+def test_the_offset_store_keeps_the_last_offset(tmp_path: Path) -> None:
+    with bot.OffsetStore(tmp_path / "state.db") as offsets:
+        assert offsets.load() is None
+        offsets.save(3)
+        offsets.save(41)
+    with bot.OffsetStore(tmp_path / "state.db") as offsets:
+        assert offsets.load() == 41
+
+
 # --- the command line -----------------------------------------------------------------------------
 
 
@@ -746,7 +836,8 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setenv(ts.CHAT_ID_VAR, CHAT)
     seen: dict[str, Any] = {}
 
-    def fake_listen(telegram: bot.BotApi, handler: Bot) -> None:
+    def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
+        seen["offsets"] = offsets.load()
         seen["chat"] = handler.chat_id
         seen["teams"] = handler.favourites.team_ids
         # The entities button writes the real config file outside a dry run.
@@ -757,7 +848,7 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setattr(bot, "listen", fake_listen)
 
     assert main(["bot"]) == 0
-    assert seen == {"chat": CHAT, "teams": ("mclaren", "haas")}
+    assert seen == {"offsets": None, "chat": CHAT, "teams": ("mclaren", "haas")}
     favourites = config.load(cli_dir / "config.toml").favourites
     assert favourites.team_ids == ("mclaren", "haas", "ferrari")
     assert "hamilton" in favourites.driver_ids
@@ -769,7 +860,7 @@ def test_a_fatal_poll_error_ends_the_command(
     monkeypatch.setenv(ts.TOKEN_VAR, TOKEN)
     monkeypatch.setenv(ts.CHAT_ID_VAR, CHAT)
 
-    def fake_listen(telegram: bot.BotApi, handler: Bot) -> None:
+    def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         raise bot.BotError("getUpdates: Conflict: terminated by other getUpdates request", 409)
 
     monkeypatch.setattr(bot, "listen", fake_listen)

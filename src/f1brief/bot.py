@@ -14,14 +14,18 @@ answer. Replies are plain text (no parse mode), so story titles and summaries ne
 escaping. The token is part of every Bot API URL, so it is redacted from every error here.
 
 `Bot.handle` turns one update into the actions to take (`Reply`, `Answer`) and changes the
-story store; `BotApi` talks to Telegram; `listen` connects the two.
+story store; `BotApi` talks to Telegram; `listen` connects the two. `OffsetStore` keeps the
+`getUpdates` offset in the state file, so a restarted listener does not answer an update twice.
 """
 
+import sqlite3
 import sys
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -471,13 +475,78 @@ class BotApi:
         self._call("sendMessage", payload)
 
 
+_OFFSET_SCHEMA = """
+CREATE TABLE IF NOT EXISTS bot_offset (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    next_update_id INTEGER NOT NULL
+)
+"""
+
+
+class OffsetStore:
+    """The `getUpdates` offset of the listener, in the state file at `path` (created on first
+    use). Telegram forgets an update only once a later poll sends an offset past it, so a
+    listener restarted after handling a batch (a crash, launchd restarting it, a reboot
+    while it waits to retry a failed poll) would otherwise get the batch again and answer
+    it twice. Use as a context manager."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = path
+        try:
+            self._db = sqlite3.connect(path, timeout=10.0, isolation_level=None)
+            self._db.execute(_OFFSET_SCHEMA)
+        except sqlite3.Error as exc:
+            raise StateError(f"cannot open {path}: {exc}") from exc
+
+    def close(self) -> None:
+        self._db.close()
+
+    def __enter__(self) -> "OffsetStore":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def load(self) -> int | None:
+        try:
+            row = self._db.execute("SELECT next_update_id FROM bot_offset").fetchone()
+        except sqlite3.Error as exc:
+            raise StateError(f"{self.path}: {exc}") from exc
+        return row[0] if row else None
+
+    def save(self, offset: int) -> None:
+        try:
+            self._db.execute(
+                "INSERT OR REPLACE INTO bot_offset (id, next_update_id) VALUES (1, ?)", (offset,)
+            )
+        except sqlite3.Error as exc:
+            raise StateError(f"{self.path}: {exc}") from exc
+
+
 def _warn(text: str) -> None:
     print(f"warning: {text}", file=sys.stderr)
 
 
+def _update_id(update: Any) -> int | None:
+    if not isinstance(update, dict) or not isinstance(update.get("update_id"), int):
+        return None
+    return update["update_id"]
+
+
+def next_offset(updates: Sequence[Any]) -> int | None:
+    """The offset that confirms `updates` (None when none has an id)."""
+    ids = [i for i in map(_update_id, updates) if i is not None]
+    return max(ids) + 1 if ids else None
+
+
 def handle_all(
     bot: Bot,
-    updates: Iterable[Any],
+    updates: Sequence[Any],
     now: datetime,
     deliver: Callable[[Action], None],
     warn: Callable[[str], None] = _warn,
@@ -485,11 +554,9 @@ def handle_all(
     """Handles `updates` in order and delivers each action; an update the store fails on and
     a failed delivery are reported and skipped. Returns the offset that confirms them (None
     when there were none)."""
-    offset: int | None = None
     for update in updates:
-        if not isinstance(update, dict) or not isinstance(update.get("update_id"), int):
+        if _update_id(update) is None:
             continue
-        offset = max(offset or 0, update["update_id"] + 1)
         try:
             actions = bot.handle(update, now)
         except (StateError, StoryError) as exc:
@@ -500,7 +567,7 @@ def handle_all(
                 deliver(action)
             except BotError as exc:
                 warn(f"reply not sent: {exc}")
-    return offset
+    return next_offset(updates)
 
 
 def listen(
@@ -511,11 +578,14 @@ def listen(
     sleep: Callable[[float], None] = time.sleep,
     warn: Callable[[str], None] = _warn,
     polls: int | None = None,
+    offsets: OffsetStore | None = None,
 ) -> None:
     """Polls for updates and answers them until stopped (or for `polls` polls). A failed
     poll is retried after a growing pause; a wrong token or a second listener (BotError with
-    `fatal`) ends it."""
-    offset: int | None = None
+    `fatal`) ends it. With `offsets`, the listener starts from the stored offset and stores
+    each batch's offset before handling it: an update is answered at most once, even across
+    restarts (one interrupted mid-batch loses the rest of that batch)."""
+    offset = offsets.load() if offsets is not None else None
     delay = RETRY_MIN_S
     done = 0
     while polls is None or done < polls:
@@ -531,4 +601,12 @@ def listen(
             delay = min(delay * 2, RETRY_MAX_S)
             continue
         delay = RETRY_MIN_S
-        offset = handle_all(bot, updates, clock(), api.send, warn) or offset
+        batch = next_offset(updates)
+        if batch is not None and (offset is None or batch > offset):
+            offset = batch
+            if offsets is not None:
+                try:
+                    offsets.save(offset)
+                except StateError as exc:
+                    warn(f"offset not stored: {exc}")
+        handle_all(bot, updates, clock(), api.send, warn)
