@@ -16,15 +16,17 @@ together with the stories that are not resolved. It answers with JSON, one decis
 `url` must be the link of one of the items sent: it is the source of the story or update, and
 a decision without one is rejected. The headline, outlet and date come from the item, never
 from the model. The answer is checked against the store first (`plan`, which writes nothing),
-then stored in one transaction (`apply`). The items answered are marked checked, rejected ones
-included, so a bad answer is reported once instead of being asked again every day; items the
-model left out stay unchecked and go to the next run.
+then stored in one transaction (`apply`). A status only moves forward along the story's
+lifecycle (`stories.can_move`): an attachment that would move it back keeps its sourced update
+but not the status, and a new story never starts resolved. The items answered are marked
+checked, rejected ones included, so a bad answer is reported once instead of being asked again
+every day; items the model left out stay unchecked and go to the next run.
 """
 
 import json
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -32,6 +34,7 @@ from f1brief import digest, news
 from f1brief.digest import TextModel
 from f1brief.news import NewsItem
 from f1brief.stories import (
+    INITIAL_STATUSES,
     Entity,
     EntityKind,
     Story,
@@ -39,6 +42,7 @@ from f1brief.stories import (
     StoryStatus,
     StoryStore,
     Update,
+    can_move,
     check_story,
     check_update,
 )
@@ -206,7 +210,9 @@ class Rejection:
 
 @dataclass(frozen=True)
 class Plan:
-    """What an answer would store. `checked` are the links of the items answered."""
+    """What an answer would store. `checked` are the links of the items answered.
+    `kept_status` are the attachments stored without the status the model gave, which the
+    story's lifecycle does not allow."""
 
     new_stories: tuple[NewStory, ...]
     attachments: tuple[Attachment, ...]
@@ -214,6 +220,7 @@ class Plan:
     rejected: tuple[Rejection, ...]
     unanswered: tuple[str, ...]
     checked: tuple[str, ...]
+    kept_status: tuple[Rejection, ...] = ()
 
 
 def _text(decision: dict[str, Any], key: str) -> str:
@@ -264,11 +271,14 @@ def _new_story(decision: dict[str, Any], item: NewsItem, taken: set[str]) -> New
     slug = _text(decision, "slug")
     if slug in taken:
         raise ValueError(f"the slug {slug!r} is taken")
+    status = _status(decision.get("status"))
+    if status not in INITIAL_STATUSES:
+        raise ValueError(f"a new story cannot start as {status.value}")
     story = NewStory(
         slug=slug,
         title_ru=_text(decision, "title_ru"),
         summary_ru=_text(decision, "summary_ru"),
-        status=_status(decision.get("status")),
+        status=status,
         entities=_entities(decision.get("entities")),
         first_update=_update(decision, item),
     )
@@ -287,10 +297,12 @@ def _attachment(decision: dict[str, Any], item: NewsItem, open_slugs: set[str]) 
 def plan(decisions: Sequence[Any], items: Sequence[NewsItem], stories: Sequence[Story]) -> Plan:
     """Checks the model's decisions about `items` against the stored `stories`; an invalid
     decision is rejected with the reason, the others are kept. An item may join a story that
-    another decision of the same answer starts."""
+    another decision of the same answer starts. Statuses are checked in the answer's order,
+    as `apply` stores them."""
     by_url = {i.link: i for i in items}
     taken = {s.slug for s in stories}
     open_slugs = {s.slug for s in stories if s.status in OPEN_STATUSES}
+    statuses = {s.slug: s.status for s in stories}
     new_stories: list[NewStory] = []
     attachments: list[tuple[dict[str, Any], NewsItem]] = []
     ignored: list[str] = []
@@ -317,6 +329,7 @@ def plan(decisions: Sequence[Any], items: Sequence[NewsItem], stories: Sequence[
                 story = _new_story(decision, item, taken)
                 taken.add(story.slug)
                 open_slugs.add(story.slug)
+                statuses[story.slug] = story.status
                 new_stories.append(story)
             elif action == "attach":
                 attachments.append((decision, item))
@@ -325,11 +338,28 @@ def plan(decisions: Sequence[Any], items: Sequence[NewsItem], stories: Sequence[
         except ValueError as exc:
             rejected.append(Rejection(url, str(exc)))
     attached: list[Attachment] = []
+    kept_status: list[Rejection] = []
     for decision, item in attachments:
         try:
-            attached.append(_attachment(decision, item, open_slugs))
+            attachment = _attachment(decision, item, open_slugs)
         except ValueError as exc:
             rejected.append(Rejection(item.link, str(exc)))
+            continue
+        current = statuses[attachment.story_slug]
+        if attachment.status is current:
+            attachment = replace(attachment, status=None)
+        elif attachment.status is not None and not can_move(current, attachment.status):
+            kept_status.append(
+                Rejection(
+                    item.link,
+                    f"{attachment.story_slug} cannot move from {current.value} to "
+                    f"{attachment.status.value}",
+                )
+            )
+            attachment = replace(attachment, status=None)
+        if attachment.status is not None:
+            statuses[attachment.story_slug] = attachment.status
+        attached.append(attachment)
     return Plan(
         new_stories=tuple(new_stories),
         attachments=tuple(attached),
@@ -337,6 +367,7 @@ def plan(decisions: Sequence[Any], items: Sequence[NewsItem], stories: Sequence[
         rejected=tuple(rejected),
         unanswered=tuple(i.link for i in items if i.link not in answered),
         checked=tuple(i.link for i in items if i.link in answered),
+        kept_status=tuple(kept_status),
     )
 
 
@@ -385,6 +416,7 @@ def format_plan(result: Plan, stored: bool) -> str:
         + f": {a.update.url}"
         for a in result.attachments
     ]
+    lines += [f"  status not changed for {r.url}: {r.reason}" for r in result.kept_status]
     lines += [f"  rejected {r.url or '(no url)'}: {r.reason}" for r in result.rejected]
     lines += [f"  unanswered {url}" for url in result.unanswered]
     return "\n".join(lines)

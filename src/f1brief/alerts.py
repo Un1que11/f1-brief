@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply, chunks
+from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply, chunks, status_line
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore, StoryUpdate
 
@@ -94,7 +94,13 @@ def text(alert: Alert) -> str:
     lines = [f"Новое в сюжете #{story.id} «{story.title_ru}» ({STATUS_RU[story.status]})"]
     for entry in alert.updates:
         update = entry.update
-        lines += ["", update.what_changed_ru, f"{update.headline} ({update.source})", update.url]
+        lines += [
+            "",
+            update.what_changed_ru,
+            *status_line(entry),
+            f"{update.headline} ({update.source})",
+            update.url,
+        ]
     lines += ["", f"Хронология: /story {story.id}"]
     return "\n".join(lines)
 

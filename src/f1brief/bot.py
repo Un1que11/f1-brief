@@ -33,7 +33,15 @@ import httpx
 from f1brief.config import ConfigError, Favourite, Favourites
 from f1brief.schedule import WARSAW
 from f1brief.send_log import StateError
-from f1brief.stories import Entity, EntityKind, Story, StoryError, StoryStatus, StoryStore
+from f1brief.stories import (
+    Entity,
+    EntityKind,
+    Story,
+    StoryError,
+    StoryStatus,
+    StoryStore,
+    StoryUpdate,
+)
 from f1brief.telegram_send import API_URL, Credentials, redact
 
 # A long poll waits up to this long for an update; the HTTP read timeout must be longer.
@@ -165,6 +173,11 @@ def favourite_for(entity: Entity) -> Favourite | None:
 
 def _date(moment: datetime) -> str:
     return moment.astimezone(WARSAW).strftime("%d.%m.%Y")
+
+
+def status_line(entry: StoryUpdate) -> list[str]:
+    """The status the update moved its story to, as a line of its own; none if it did not."""
+    return [f"Статус → {STATUS_RU[entry.status]}"] if entry.status else []
 
 
 def _line(story: Story) -> str:
@@ -306,6 +319,7 @@ class Bot:
                 "",
                 f"{when} — {update.headline} ({update.source})",
                 update.what_changed_ru,
+                *status_line(entry),
                 update.url,
             ]
         return _replies("\n".join(lines), self._story_buttons(story, following))

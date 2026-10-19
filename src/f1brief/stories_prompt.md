@@ -30,8 +30,11 @@ the stories, starts a new one, or is not part of any storyline.
    "could", "set to"); `developing` when the people involved confirm that talks or a process
    are under way but the outcome is open; `confirmed` or `denied` only when the team, the
    driver or the FIA officially announces the outcome in the item; `resolved` only for a story
-   whose confirmed or denied outcome has taken effect. Rumours stay rumours: the Russian title
-   and summary of a rumour say that it is a rumour (a question in the title, "по слухам").
+   whose confirmed or denied outcome has taken effect. A status only moves forward
+   (`rumor` → `developing` → `confirmed` or `denied` → `resolved`, steps may be skipped up to
+   `confirmed` or `denied`): never give a story an earlier status than it has, and never start
+   a new story as `resolved`. Rumours stay rumours: the Russian title and summary of a rumour
+   say that it is a rumour (a question in the title, "по слухам").
 7. Entities: each is `{"kind": ..., "ref": ...}` with `kind` one of `driver`, `team`,
    `person` (team principals and other people who are not drivers). `ref` is a lowercase id
    with words joined by `_`: for drivers and teams the Jolpica-F1 id (a driver's surname, or
