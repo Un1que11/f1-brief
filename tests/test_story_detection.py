@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+from conftest import FIXTURES
 from test_digest import facts_of
 
 from f1brief import cli, digest, news
@@ -26,6 +28,8 @@ from f1brief.stories import (
 )
 
 NOW = datetime(2026, 10, 16, 9, tzinfo=UTC)
+# The real `fetch_news`, kept before the command fixture stubs it.
+REAL_FETCH_NEWS = news.fetch_news
 WATCH = ["McLaren", "Russell", "Ocon"]
 
 
@@ -530,3 +534,32 @@ def test_an_unreadable_answer_is_an_error_and_stores_nothing(run: Any, capsys: A
     assert "not JSON" in capsys.readouterr().err
     with StoryStore("state.db") as store:
         assert store.unchecked([OCON_SEAT.link]) == [OCON_SEAT.link]
+
+
+def test_the_command_sends_hot_items_about_a_followed_non_favourite_entity(
+    run: Any, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """A followed story about Ferrari: an item naming Ferrari and a team principal is hot
+    (`EXTRA_TERMS`) although it names no favourite and matches no news topic, so the news
+    filter of the digest must not drop it before detection sees it."""
+    feed = (FIXTURES / "rss" / "followed_entity_like.xml").read_bytes()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=feed))
+    monkeypatch.setattr(
+        news,
+        "fetch_news",
+        lambda since, favourites, **kwargs: REAL_FETCH_NEWS(
+            since,
+            favourites,
+            feeds=(news.Feed("Example News", "https://example.test/feed"),),
+            client=httpx.Client(transport=transport),
+            **kwargs,
+        ),
+    )
+    with StoryStore("state.db") as store:
+        story = seed(store, "ferrari-boss", entities=[Entity(EntityKind.TEAM, "ferrari")])
+        store.follow(story.id, NOW)
+
+    assert run("--prompt-only") == 0
+
+    sent = facts_of(capsys.readouterr().out)
+    assert [i["url"] for i in sent["items"]] == ["https://example.test/feed/ferrari-boss"]

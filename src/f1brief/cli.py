@@ -987,7 +987,9 @@ def _cmd_detect_stories(
         return 2
     now = _now()
     try:
-        report = news.fetch_news(news.default_since(now, days), favourites)
+        # All items: one about a followed story's entity (Ferrari, Hamilton) that is hot only
+        # through `story_detection.EXTRA_TERMS` matches no favourite and no news topic.
+        report = news.fetch_news(news.default_since(now, days), favourites, relevant_only=False)
     except news.NewsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
