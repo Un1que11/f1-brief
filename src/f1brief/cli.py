@@ -119,6 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
         "facts", help="collect every fact for the next race weekend as JSON with sources"
     )
     facts_cmd.add_argument("--output", metavar="PATH", help="write to a file instead of stdout")
+    facts_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories and sends (default: {send_log.DEFAULT_STATE_FILE})",
+    )
 
     digest_cmd = commands.add_parser(
         "digest", help="write the digest text from the facts with headless Claude Code"
@@ -130,6 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
     digest_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
     digest_cmd.add_argument(
         "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+    digest_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories and sends (default: {send_log.DEFAULT_STATE_FILE})",
     )
 
     summary_cmd = commands.add_parser(
@@ -510,9 +522,24 @@ def _cmd_weather() -> int:
     return 0
 
 
-def _collect_facts(favourites: config.Favourites) -> dict | None:
+def _stories_reader(state: str, now: datetime, favourites: config.Favourites) -> Callable[[], dict]:
+    """Builds the facts' `stories` section from the state file: the followed stories'
+    updates since the last digest."""
+
+    def read() -> dict:
+        with send_log.SendLog(state) as log:
+            last_digest = log.last_digest_at(now)
+        with stories.StoryStore(state) as store:
+            since = facts.stories_since(last_digest, now)
+            return facts.stories_facts(store, since, last_digest is not None, favourites)
+
+    return read
+
+
+def _collect_facts(favourites: config.Favourites, state: str) -> dict | None:
     """The facts document, or None (after printing why) when no section could be collected."""
-    document = facts.collect(_now(), favourites)
+    now = _now()
+    document = facts.collect(now, favourites, stories=_stories_reader(state, now, favourites))
     if not any(data is not None for data in document["sections"].values()):
         for gap in document["missing"]:
             print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
@@ -533,8 +560,8 @@ def _write(text: str, output: str | None) -> None:
         sys.stdout.write(text)
 
 
-def _cmd_facts(output: str | None, favourites: config.Favourites) -> int:
-    document = _collect_facts(favourites)
+def _cmd_facts(output: str | None, state: str, favourites: config.Favourites) -> int:
+    document = _collect_facts(favourites, state)
     if document is None:
         return 1
     _write(json.dumps(document, ensure_ascii=False, indent=2) + "\n", output)
@@ -547,6 +574,7 @@ def _cmd_digest(
     output: str | None,
     model: str | None,
     prompt_only: bool,
+    state: str,
     favourites: config.Favourites,
 ) -> int:
     if facts_path:
@@ -560,7 +588,7 @@ def _cmd_digest(
             print(f"error: {facts_path} is not a `facts` document", file=sys.stderr)
             return 1
     else:
-        document = _collect_facts(favourites)
+        document = _collect_facts(favourites, state)
         if document is None:
             return 1
     if prompt_only:
@@ -703,10 +731,10 @@ def _cmd_due(days_before: int, state: str) -> int:
 
 
 def _digest_for(
-    race: schedule.Race, model: str | None, favourites: config.Favourites
+    race: schedule.Race, model: str | None, state: str, favourites: config.Favourites
 ) -> list[str] | None:
     """The digest messages for `race`, or None (after printing why) when they cannot be made."""
-    document = _collect_facts(favourites)
+    document = _collect_facts(favourites, state)
     if document is None:
         return None
     about = document["sections"]["race"]
@@ -960,7 +988,7 @@ def _run_due(
             if decision.due and decision.race is not None:
                 # Before the digest is written, so missing settings cost no claude run.
                 credentials = _credentials(dry_run, env_file)
-                chunks = _digest_for(decision.race, model, favourites)
+                chunks = _digest_for(decision.race, model, state, favourites)
                 return _send_or_print(chunks, credentials, _round_target(log, decision.race))
             quali = after_qualifying.decide(races, _now(), log)
             if quali.under_way:
@@ -1337,9 +1365,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "weather":
         return _cmd_weather()
     if args.command == "facts":
-        return _cmd_facts(args.output, favourites)
+        return _cmd_facts(args.output, args.state, favourites)
     if args.command == "digest":
-        return _cmd_digest(args.facts, args.output, args.model, args.prompt_only, favourites)
+        return _cmd_digest(
+            args.facts, args.output, args.model, args.prompt_only, args.state, favourites
+        )
     if args.command == "summary":
         return _cmd_summary(args.output, args.model, args.prompt_only, args.state, favourites)
     if args.command == "quali":

@@ -146,6 +146,15 @@ story, and updates that have waited more than 3 days, are skipped (the digest co
 and the night's queue with the first run after 08:00. `alerts --dry-run` prints them and records
 nothing.
 
+The digest's "Твои сюжеты" section (F25): the facts' `stories` section lists every followed
+story (muted ones too) with its title, summary, status and entities, and the updates recorded
+since the last digest went out (the latest row in `sends`; 14 days back when no digest has been
+sent yet), each with its headline, outlet and link, which are also the section's `sources`.
+Entities that are favourites are marked, so the prompt can tie a story to that driver's or
+team's facts in the same document (e.g. a teammate head-to-head for a driver whose seat is in
+play). With no followed story the digest leaves the section out. `facts`, `digest` and `run`
+read it from `--state`.
+
 `f1brief bot` (F23) is the Telegram bot for the stories: a long-polling listener that runs until
 stopped (meant for its own launchd job with `KeepAlive`). It answers only the chat in
 `TELEGRAM_CHAT_ID`; updates from any other chat get no answer. Commands (Russian UI):

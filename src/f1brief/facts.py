@@ -7,7 +7,7 @@ so the generator can say what is unknown instead of guessing.
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from typing import Any
 
@@ -27,11 +27,16 @@ from f1brief import (
 )
 from f1brief.config import Favourites
 from f1brief.schedule import WARSAW, Race
+from f1brief.send_log import StateError
+from f1brief.stories import EntityKind, StoryError, StoryStore, StoryUpdate
 
 # 2 (F20): favourites from the config (several teams), `team_form.teams`, shared teammate
 # head-to-heads in `drivers`, `favourite_teams_points` in `track`, news `future`.
-SCHEMA_VERSION = 2
+# 3 (F25): `stories`, the followed stories and their updates since the last digest.
+SCHEMA_VERSION = 3
 NEWS_DAYS = 7
+# How far back `stories` looks when no digest has been sent yet.
+STORIES_DAYS = 14
 
 _HOSTS = {
     "api.jolpi.ca": jolpica.SOURCE_NAME,
@@ -409,10 +414,89 @@ def weather_facts(forecast: weather.WeekendForecast) -> dict[str, Any]:
     }
 
 
+def stories_since(last_digest: datetime | None, now: datetime) -> datetime:
+    """Where `stories` starts: the last digest, or `STORIES_DAYS` back when there is none."""
+    return last_digest if last_digest is not None else now - timedelta(days=STORIES_DAYS)
+
+
+def _story_update(entry: StoryUpdate) -> dict[str, Any]:
+    update = entry.update
+    return {
+        # null when the article has no date
+        "published": _time(update.published_at),
+        "recorded": _time(entry.recorded_at),
+        "headline": update.headline,
+        "what_changed": update.what_changed_ru,
+        "source": update.source,
+        "link": update.url,
+    }
+
+
+def stories_facts(
+    store: StoryStore, since: datetime, last_digest: bool, favourites: Favourites
+) -> dict[str, Any]:
+    """Every story followed now, with its updates recorded at or after `since` (each with
+    its source and link); `last_digest` says whether `since` is the last digest. Entities
+    that are favourites have their own entries in `drivers` / `team_form` under the same id."""
+    favourite_ids = {
+        EntityKind.DRIVER: set(favourites.driver_ids),
+        EntityKind.TEAM: set(favourites.team_ids),
+    }
+    new: dict[int, list[StoryUpdate]] = {}
+    for entry in store.updates_since(since, followed_only=True):
+        new.setdefault(entry.story_id, []).append(entry)
+    followed = []
+    sources: list[dict[str, str]] = []
+    for story in store.followed():
+        subscription = store.subscription(story.id)
+        updates = new.get(story.id, [])
+        for entry in updates:
+            source = {"name": entry.update.source, "url": entry.update.url}
+            if source not in sources:
+                sources.append(source)
+        followed.append(
+            {
+                "id": story.id,
+                "title": story.title_ru,
+                "summary": story.summary_ru,
+                # rumor | developing | confirmed | denied | resolved
+                "status": story.status.value,
+                "entities": [
+                    {
+                        "kind": e.kind.value,
+                        "ref": e.ref,
+                        "favourite": e.ref in favourite_ids.get(e.kind, set()),
+                    }
+                    for e in store.entities(story.id)
+                ],
+                "followed_since": _time(subscription.followed_at) if subscription else None,
+                "last_update_at": _time(story.last_update_at),
+                # oldest first; empty when nothing changed since `since`
+                "updates_since": [_story_update(u) for u in updates],
+            }
+        )
+    return {
+        "since": _time(since),
+        "since_last_digest": last_digest,
+        "followed": followed,
+        "sources": sources,
+    }
+
+
 # --- assembly ---------------------------------------------------------------------------
 
 
-SECTIONS = ("race", "standings", "team_form", "drivers", "pace", "track", "news", "weather")
+SECTIONS = (
+    "race",
+    "standings",
+    "team_form",
+    "drivers",
+    "pace",
+    "stories",
+    "track",
+    "news",
+    "weather",
+)
 
 
 def collect(
@@ -420,11 +504,13 @@ def collect(
     favourites: Favourites,
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] | None = None,
+    stories: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Fetches every section for the next race weekend and returns the facts document.
 
     A section that fails is `null` and listed in `missing`; the others are still collected.
-    `now` must be timezone-aware.
+    `stories` builds the `stories` section from the state file (see `stories_facts`); without
+    it the section is missing. `now` must be timezone-aware.
     """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
@@ -487,6 +573,16 @@ def collect(
             "pace",
             lambda: pace_facts(pace.fetch_report(now, favourites, client, **pace_kwargs)),
         )
+        if stories is None:
+            sections["stories"] = None
+            missing.append({"section": "stories", "reason": "the followed stories were not read"})
+        else:
+            try:
+                # Read from the state file, not fetched: its sources are the updates' articles.
+                sections["stories"] = stories()
+            except (StateError, StoryError) as exc:
+                sections["stories"] = None
+                missing.append({"section": "stories", "reason": str(exc)})
         if upcoming is None:
             for name in ("track", "weather"):
                 sections[name] = None

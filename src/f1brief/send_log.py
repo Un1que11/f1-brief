@@ -207,6 +207,14 @@ class SendLog:
         """Removes the round's row whatever its status; False when there was none."""
         return self._forget("sends", _ROUND, (season, round))
 
+    def last_digest_at(self, before: datetime) -> datetime | None:
+        """When the latest round's digest started going out before `before`, or None when
+        there is none. Any status counts: a digest that was claimed may be in the chat."""
+        row = self._execute(
+            "SELECT MAX(started_at) FROM sends WHERE started_at < ?", (_stamp(before),)
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row[0] else None
+
     # --- a round's message after qualifying (F19) ------------------------------------------
 
     def get_qualifying(self, season: int, round: int) -> SendRecord | None:

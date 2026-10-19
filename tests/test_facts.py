@@ -14,6 +14,13 @@ from f1brief.config import DEFAULT_FAVOURITES
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 JOLPICA = "https://api.jolpi.ca/ergast/f1"
+# No story is followed (see test_digest_stories.py for the section itself).
+NO_STORIES = {
+    "since": "2026-10-01T14:00:00+02:00",
+    "since_last_digest": False,
+    "followed": [],
+    "sources": [],
+}
 
 
 def collect(
@@ -21,7 +28,9 @@ def collect(
 ) -> dict[str, Any]:
     seen = [] if seen is None else seen
     with facts_transport.client(seen, override) as client:
-        return facts.collect(NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None)
+        return facts.collect(
+            NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None, stories=lambda: NO_STORIES
+        )
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +46,8 @@ def test_every_section_is_collected(document: dict[str, Any]) -> None:
     assert document["missing"] == []
     assert list(document["sections"]) == list(facts.SECTIONS)
     assert all(document["sections"].values())
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
+    assert document["sections"]["stories"] == NO_STORIES
     assert document["generated_at"] == "2026-10-15T14:00:00+02:00"
     assert document["favourites"] == {
         "teams": [{"id": "mclaren", "name": "McLaren"}, {"id": "haas", "name": "Haas"}],
@@ -321,7 +331,7 @@ def test_cli_writes_the_document(
         "missing": [{"section": "weather", "reason": "beyond the forecast range"}],
     }
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now, favourites: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: stub)
     target = tmp_path / "facts.json"
 
     assert main(["facts", "--output", str(target)]) == 0
@@ -341,7 +351,7 @@ def test_cli_fails_when_nothing_was_collected(
         "sections": {"race": None},
         "missing": [{"section": "race", "reason": "network down"}],
     }
-    monkeypatch.setattr(facts, "collect", lambda now, favourites: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: stub)
 
     assert main(["facts"]) == 1
     captured = capsys.readouterr()
