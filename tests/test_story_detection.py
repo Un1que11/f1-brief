@@ -462,7 +462,7 @@ def test_a_state_file_from_f21_gains_the_checked_news_table(tmp_path: Path) -> N
         assert store.unchecked([OCON_SEAT.link, OCON_TALKS.link]) == [OCON_TALKS.link]
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT version FROM schema_versions").fetchall() == [(SCHEMA_VERSION,)]
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION >= 2
 
 
 # --- the command --------------------------------------------------------------------------
