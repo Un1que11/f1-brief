@@ -146,6 +146,17 @@ story, and updates that have waited more than 3 days, are skipped (the digest co
 and the night's queue with the first run after 08:00. `alerts --dry-run` prints them and records
 nothing.
 
+Story lifecycle (F26): a story moves rumor → developing → confirmed or denied → resolved, only
+with a sourced update and only forward (steps may be skipped up to confirmed or denied; only a
+confirmed or denied story becomes resolved). Each update records the status it set, and
+`/story` shows it next to the source. When claude gives an attached item an earlier status, the
+update is stored without it and `detect-stories` reports "status not changed"; a new story never
+starts as resolved. A followed story with no update for 60 days (counted from its latest update,
+or from when it was followed if later) gets one message offering to unfollow, with the
+"Отписаться" button; a later update starts a new 60 days. `alerts` (and so `run`) sends these
+offers after the alerts, never in the quiet hours or while the story is muted, and they do not
+count towards the 3 alerts a day.
+
 The digest's "Твои сюжеты" section (F25): the facts' `stories` section lists every followed
 story (muted ones too) with its title, summary, status and entities, and the updates recorded
 since the last digest went out (the latest row in `sends`; 14 days back when no digest has been

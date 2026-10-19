@@ -4,10 +4,12 @@ see `*.db`) next to the send log and the news archive.
 The tables follow "Hot stories" in CLAUDE.md: `stories`, `story_entities`, `story_updates` and
 `subscriptions`. Every update carries the URL of the article it came from, and a story is
 created together with its first update, so there is no story and no update without a source.
-A story's status changes only together with an update (`add_update(..., status=...)`).
+A story's status changes only together with a sourced update (`add_update(..., status=...)`),
+only forward along its lifecycle (`can_move`), and the update records the status it set.
 Unfollowing keeps the story and its timeline. `checked_news` lists the news links story
 detection (F22) has already looked at, so each article is judged once. `story_alerts` records
-which updates of followed stories an alert (F24) has sent or skipped.
+which updates of followed stories an alert (F24) has sent or skipped. `stale_offers` records
+the offers to unfollow a followed story that has gone quiet (F26).
 
 The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
 how many it has had in `schema_versions` (one row per part of the state file that migrates,
@@ -95,6 +97,22 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )""",
         "CREATE INDEX story_alerts_decided_at ON story_alerts (outcome, decided_at)",
     ),
+    (
+        # The status an update moved its story to (F26): set on a story's first update and on
+        # each one that changed the status, null otherwise. Updates stored before this step
+        # keep null: which of them changed the status was not recorded.
+        "ALTER TABLE story_updates ADD COLUMN status TEXT CHECK (status IS NULL OR status IN "
+        "('rumor', 'developing', 'confirmed', 'denied', 'resolved'))",
+        # One row per offer to unfollow a followed story with no news (F26). `quiet_since` is
+        # when the quiet stretch began (the latest update, or the follow if later), so each
+        # stretch is offered once.
+        """CREATE TABLE stale_offers (
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            quiet_since TEXT NOT NULL,
+            offered_at TEXT NOT NULL,
+            PRIMARY KEY (story_id, quiet_since)
+        )""",
+    ),
 )
 
 SCHEMA_VERSION = len(_MIGRATIONS)
@@ -112,6 +130,32 @@ class StoryStatus(StrEnum):
     CONFIRMED = "confirmed"
     DENIED = "denied"
     RESOLVED = "resolved"
+
+
+# A story's lifecycle (see "Hot stories" in CLAUDE.md): rumor -> developing -> confirmed or
+# denied -> resolved. A status only moves forward, it may skip a step (an official
+# announcement can confirm a rumour), and only a confirmed or denied story becomes resolved.
+_STAGES = {
+    StoryStatus.RUMOR: 0,
+    StoryStatus.DEVELOPING: 1,
+    StoryStatus.CONFIRMED: 2,
+    StoryStatus.DENIED: 2,
+    StoryStatus.RESOLVED: 3,
+}
+# What a new story may start as: it is resolved only after its outcome was announced.
+INITIAL_STATUSES = (
+    StoryStatus.RUMOR,
+    StoryStatus.DEVELOPING,
+    StoryStatus.CONFIRMED,
+    StoryStatus.DENIED,
+)
+
+
+def can_move(current: StoryStatus, new: StoryStatus) -> bool:
+    """Whether an update may move a story from `current` to `new` (a different status)."""
+    if new is StoryStatus.RESOLVED:
+        return current in (StoryStatus.CONFIRMED, StoryStatus.DENIED)
+    return _STAGES[StoryStatus(new)] > _STAGES[StoryStatus(current)]
 
 
 class EntityKind(StrEnum):
@@ -148,6 +192,9 @@ class StoryUpdate:
     story_id: int
     update: Update
     recorded_at: datetime
+    # The status this update moved the story to; None when it changed none (or was stored
+    # before F26 recorded it).
+    status: StoryStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -222,7 +269,9 @@ def check_story(
 
 
 _STORY_COLUMNS = "id, slug, title_ru, summary_ru, status, created_at, last_update_at"
-_UPDATE_COLUMNS = "id, story_id, headline, url, source, what_changed_ru, published_at, recorded_at"
+_UPDATE_COLUMNS = (
+    "id, story_id, headline, url, source, what_changed_ru, published_at, recorded_at, status"
+)
 
 
 def _story(row: tuple) -> Story:
@@ -239,7 +288,7 @@ def _story(row: tuple) -> Story:
 
 
 def _story_update(row: tuple) -> StoryUpdate:
-    id_, story_id, headline, url, source, what_changed_ru, published_at, recorded_at = row
+    id_, story_id, headline, url, source, what_changed_ru, published_at, recorded_at, status = row
     return StoryUpdate(
         id=id_,
         story_id=story_id,
@@ -251,6 +300,7 @@ def _story_update(row: tuple) -> StoryUpdate:
             published_at=_moment(published_at),
         ),
         recorded_at=datetime.fromisoformat(recorded_at),
+        status=StoryStatus(status) if status else None,
     )
 
 
@@ -367,7 +417,7 @@ class StoryStore:
                 "INSERT OR IGNORE INTO story_entities (story_id, kind, ref) VALUES (?, ?, ?)",
                 [(story_id, EntityKind(e.kind).value, e.ref) for e in entities],
             )
-            self._insert_update(story_id, first_update, recorded)
+            self._insert_update(story_id, first_update, recorded, status)
         return self._require(story_id)
 
     def _execute_many(self, sql: str, rows: list[tuple[object, ...]]) -> None:
@@ -376,11 +426,13 @@ class StoryStore:
         except sqlite3.Error as exc:
             raise StateError(f"{self.path}: {exc}") from exc
 
-    def _insert_update(self, story_id: int, update: Update, recorded: str) -> bool:
+    def _insert_update(
+        self, story_id: int, update: Update, recorded: str, status: StoryStatus | None
+    ) -> bool:
         published = _stamp(update.published_at) if update.published_at else None
         cursor = self._execute(
             "INSERT OR IGNORE INTO story_updates (story_id, published_at, headline, url, "
-            "source, what_changed_ru, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "source, what_changed_ru, recorded_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 story_id,
                 published,
@@ -389,6 +441,7 @@ class StoryStore:
                 update.source,
                 update.what_changed_ru,
                 recorded,
+                status.value if status else None,
             ),
         )
         return cursor.rowcount == 1
@@ -400,20 +453,28 @@ class StoryStore:
         now: datetime,
         status: StoryStatus | None = None,
     ) -> bool:
-        """Attaches a sourced update to a story, and moves the story to `status` if given.
-        False (and nothing changed) when the story already has an update from that URL.
-        Raises StoryError for an unknown story."""
+        """Attaches a sourced update to a story, and moves the story to `status` if given
+        (the story's own status changes nothing). False (and nothing changed) when the story
+        already has an update from that URL. Raises StoryError for an unknown story or a move
+        its lifecycle does not allow (`can_move`)."""
         check_update(update)
         recorded = _stamp(now)
         moment = _stamp(update.published_at) if update.published_at else recorded
         with self._transaction():
-            self._require(story_id)
-            if not self._insert_update(story_id, update, recorded):
+            story = self._require(story_id)
+            new = StoryStatus(status) if status else None
+            if new is story.status:
+                new = None
+            if new is not None and not can_move(story.status, new):
+                raise StoryError(
+                    f"story {story_id} cannot move from {story.status.value} to {new.value}"
+                )
+            if not self._insert_update(story_id, update, recorded, new):
                 return False
             self._execute(
                 "UPDATE stories SET last_update_at = MAX(last_update_at, ?), "
                 "status = COALESCE(?, status) WHERE id = ?",
-                (moment, StoryStatus(status).value if status else None, story_id),
+                (moment, new.value if new else None, story_id),
             )
         return True
 
@@ -588,3 +649,27 @@ class StoryStore:
             (_stamp(start), _stamp(end)),
         ).fetchone()
         return row[0]
+
+    # --- offers to unfollow a quiet story ---------------------------------------------------
+
+    def stale_offered(self, story_id: int, quiet_since: datetime) -> bool:
+        """Whether the quiet stretch of the story that began at `quiet_since` was offered."""
+        row = self._execute(
+            "SELECT 1 FROM stale_offers WHERE story_id = ? AND quiet_since = ?",
+            (story_id, _stamp(quiet_since)),
+        ).fetchone()
+        return row is not None
+
+    def record_stale_offer(self, story_id: int, quiet_since: datetime, now: datetime) -> None:
+        self._execute(
+            "INSERT OR IGNORE INTO stale_offers (story_id, quiet_since, offered_at) "
+            "VALUES (?, ?, ?)",
+            (story_id, _stamp(quiet_since), _stamp(now)),
+        )
+
+    def forget_stale_offer(self, story_id: int, quiet_since: datetime) -> None:
+        """Makes the offer due again (one that could not be delivered)."""
+        self._execute(
+            "DELETE FROM stale_offers WHERE story_id = ? AND quiet_since = ?",
+            (story_id, _stamp(quiet_since)),
+        )

@@ -233,7 +233,7 @@ def test_story_shows_the_timeline_with_sources(store: StoryStore, handler: Bot) 
     assert text.startswith(f"#{story.id} Бирман в Ferrari в 2028?\nСтатус: слух · не следишь\n")
     assert (
         "30.09.2026 — Synthetic headline 1 (Example News)\n"
-        "Синтетика: изменение 1.\nhttps://example.com/story-1"
+        "Синтетика: изменение 1.\nСтатус → слух\nhttps://example.com/story-1"
     ) in text
     assert "12.10.2026 — Synthetic headline 2 (Example News)" in text
     # An undated article is dated by when it was recorded.

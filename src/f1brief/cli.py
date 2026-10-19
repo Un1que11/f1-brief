@@ -23,6 +23,7 @@ from f1brief import (
     facts,
     form,
     launchd,
+    lifecycle,
     news,
     news_archive,
     offseason,
@@ -270,7 +271,8 @@ def build_parser() -> argparse.ArgumentParser:
     alerts_cmd = commands.add_parser(
         "alerts",
         help="send the alerts on followed stories that are due (none in the quiet hours "
-        "23:00-08:00 Warsaw, at most 3 a day; `run` does this too)",
+        "23:00-08:00 Warsaw, at most 3 a day) and the offers to unfollow a followed story "
+        "with no news for 60 days; `run` does this too",
     )
     alerts_cmd.add_argument(
         "--state",
@@ -281,8 +283,8 @@ def build_parser() -> argparse.ArgumentParser:
     alerts_cmd.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the alerts that are due instead of sending them; records nothing, needs "
-        "no token",
+        help="print the alerts and offers that are due instead of sending them; records "
+        "nothing, needs no token",
     )
     alerts_cmd.add_argument(
         "--env-file",
@@ -948,21 +950,33 @@ def _cmd_alerts(state: str, dry_run: bool, env_file: str) -> int:
     try:
         with stories.StoryStore(state) as store:
             planned = alerts.plan(store, now)
-            if not (planned.send or planned.waiting or planned.skip):
+            offers = lifecycle.plan(store, now)
+            any_alert = bool(planned.send or planned.waiting or planned.skip)
+            any_offer = bool(offers.send or offers.waiting)
+            if not (any_alert or any_offer):
                 return 0
-            print(planned.describe(), file=sys.stderr)
+            if any_alert:
+                print(planned.describe(), file=sys.stderr)
+            if any_offer:
+                print(offers.describe(), file=sys.stderr)
             if dry_run:
                 for alert in planned.send:
                     for reply in alerts.replies(alert):
                         _print_action(reply)
+                for offer in offers.send:
+                    _print_action(lifecycle.reply(offer, now))
                 print("dry run: no alert sent, nothing recorded", file=sys.stderr)
                 return 0
-            if not planned.send:
+            if not (planned.send or offers.send):
                 alerts.deliver(store, planned, now, send=lambda reply: None)
                 return 0
             credentials = telegram_send.load_credentials(env_file=env_file)
             with _telegram_client() as client:
-                ok = alerts.deliver(store, planned, now, bot.BotApi(credentials, client).send)
+                send = bot.BotApi(credentials, client).send
+                # Offers wait while Telegram refuses the alerts.
+                ok = alerts.deliver(store, planned, now, send) and lifecycle.deliver(
+                    store, offers, now, send
+                )
             return 0 if ok else 1
     except (telegram_send.SendError, send_log.StateError, stories.StoryError) as exc:
         print(f"error: story alerts: {exc}", file=sys.stderr)
