@@ -1,0 +1,27 @@
+# Seed stories (F27): articles that `f1brief seed-stories` sends through story detection, like
+# the hot items of the news feeds. Claude decides the story (title, summary, status, entities)
+# from them, as for any news item; nothing about the story itself is written here.
+# Each seed describes its article as a feed would:
+#   url       - the article; it becomes the source of the story's update
+#   title     - the article's headline
+#   source    - the outlet
+#   published - when the article was published, with its offset
+#   summary   - what the article reports, in a sentence or two
+#   follow    - follow the story it starts or joins (default: true)
+# A seed is done once a story has an update from its url; running the command again sends
+# only the seeds that have none (one claude ignored is asked about again).
+
+# Bearman to Ferrari in 2028 in place of Hamilton?
+[[seed]]
+url = "https://www.gpfans.com/en/f1-news/1089724/f1-lewis-hamilton-new-contract-ferrari-force-ollie-bearman-team-change/"
+title = "New Lewis Hamilton Ferrari contract could force F1 star to leave team"
+source = "GPFans"
+published = 2026-09-01T08:56:00+02:00
+summary = "A new Ferrari contract for Lewis Hamilton, expected to be announced around the Italian Grand Prix, could make Haas driver Ollie Bearman rethink his plan of moving up to Ferrari."
+
+[[seed]]
+url = "https://www.f1oversteer.com/news/ferrari-will-have-a-77-million-problem-if-they-replace-lewis-hamilton-with-oliver-bearman/"
+title = "Ferrari will have a £77 million problem if they replace Lewis Hamilton with Oliver Bearman"
+source = "F1 Oversteer"
+published = 2026-08-16T12:00:00+00:00
+summary = "Haas driver Oliver Bearman is seen as next in line for a Ferrari seat in place of Lewis Hamilton, but may have to wait until 2028; the article argues Ferrari would lose the roughly £77 million a year of revenue that Hamilton brings."
