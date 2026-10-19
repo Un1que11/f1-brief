@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
@@ -18,6 +19,7 @@ from f1brief import (
     drivers,
     facts,
     form,
+    launchd,
     news,
     news_archive,
     offseason,
@@ -286,6 +288,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     forget_cmd.add_argument("--month", metavar="YYYY-MM", help="an off-season month's summary")
     add_state(forget_cmd)
+
+    launchd_cmd = commands.add_parser(
+        "launchd",
+        help="print (or write) the macOS LaunchAgent that runs `f1brief run` every hour",
+    )
+    launchd_cmd.add_argument(
+        "--output",
+        metavar="PATH",
+        help="write the plist here (e.g. ~/Library/LaunchAgents/"
+        f"{launchd.PLIST_NAME}) and create the log directory; default: print it",
+    )
+    launchd_cmd.add_argument(
+        "--workdir",
+        metavar="DIR",
+        default=".",
+        help="the f1-brief checkout, with config.toml, .env and state.db (default: .)",
+    )
+    launchd_cmd.add_argument(
+        "--interval",
+        type=int,
+        default=launchd.DEFAULT_INTERVAL_MINUTES,
+        metavar="MINUTES",
+        help=f"how often launchd starts `run` (default: {launchd.DEFAULT_INTERVAL_MINUTES})",
+    )
+    launchd_cmd.add_argument(
+        "--log-dir",
+        metavar="DIR",
+        help="where the job's output goes (default: ~/Library/Logs/f1brief)",
+    )
+    launchd_cmd.add_argument(
+        "--uv", metavar="PATH", help="full path of uv (default: found on PATH)"
+    )
+    launchd_cmd.add_argument(
+        "--claude", metavar="PATH", help="full path of claude (default: found on PATH)"
+    )
     return parser
 
 
@@ -1024,6 +1061,46 @@ def _cmd_forget(
     return 0
 
 
+def _cmd_launchd(
+    output: str | None,
+    workdir: str,
+    interval: int,
+    log_dir: str | None,
+    uv: str | None,
+    claude: str | None,
+) -> int:
+    home = Path.home()
+    try:
+        job = launchd.make_job(
+            Path(workdir),
+            Path(log_dir) if log_dir else launchd.default_log_dir(home),
+            interval_minutes=interval,
+            uv=uv,
+            claude=claude,
+        )
+    except launchd.LaunchdError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    content = launchd.render(job)
+    if output is None:
+        sys.stdout.write(content.decode("utf-8"))
+        return 0
+    path = Path(output).expanduser().resolve()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        job.log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {path}")
+    print(f"logs: {job.stdout_log}, {job.stderr_log}")
+    print("to load it (and run it once now), run:")
+    for command in launchd.install_commands(path):
+        print(f"  {command}")
+    return 0
+
+
 def _cmd_config(settings: config.Config) -> int:
     where = str(settings.source) if settings.source else "built-in defaults (no config file)"
     print(f"settings: {where}")
@@ -1101,6 +1178,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "detect-stories":
         return _cmd_detect_stories(
             args.days, args.state, args.model, args.prompt_only, args.dry_run, favourites
+        )
+    if args.command == "launchd":
+        return _cmd_launchd(
+            args.output, args.workdir, args.interval, args.log_dir, args.uv, args.claude
         )
     if args.command == "forget":
         return _cmd_forget(args.season, args.round, args.month, args.qualifying, args.state)
