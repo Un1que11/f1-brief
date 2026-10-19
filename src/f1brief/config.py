@@ -2,8 +2,12 @@
 
 The file is optional. Without it every setting has the default below, which matches the
 checked-in `config.toml`; a file that exists but is malformed is an error, never ignored.
+The bot (F23) appends favourites to it with `add_favourites` when asked to follow a story's
+teams and drivers.
 """
 
+import json
+import os
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -180,6 +184,78 @@ def _favourites(
             )
         )
     return tuple(result)
+
+
+def _toml_entry(key: str, favourite: Favourite) -> str:
+    # JSON string escapes are valid in TOML basic strings.
+    lines = [
+        f"[[favourites.{key}]]",
+        f"id = {json.dumps(favourite.id, ensure_ascii=False)}",
+        f"name = {json.dumps(favourite.name, ensure_ascii=False)}",
+    ]
+    if favourite.aliases != (favourite.name,):
+        aliases = ", ".join(json.dumps(a, ensure_ascii=False) for a in favourite.aliases)
+        lines.append(f"aliases = [{aliases}]")
+    if favourite.track_future:
+        lines.append("track_future = true")
+    return "\n".join(lines)
+
+
+def add_favourites(
+    path: str | Path,
+    teams: Sequence[Favourite] = (),
+    drivers: Sequence[Favourite] = (),
+    write: bool = True,
+) -> Config:
+    """Appends the teams and drivers that are not favourites yet to the config file (created
+    when absent) and returns the settings it then holds. The rest of the file, comments
+    included, is kept as it is. A list the file leaves out means the defaults, so those are
+    written out first; otherwise the appended entries would replace them. With `write=False`
+    nothing is written: the result is what the file would hold."""
+    file = Path(path)
+    try:
+        text = file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    except OSError as exc:
+        raise ConfigError(f"{file}: {exc.strerror or exc}") from exc
+
+    def parsed(source: str) -> tuple[dict[str, Any], Config]:
+        try:
+            data = tomllib.loads(source)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"{file}: not valid TOML: {exc}") from exc
+        try:
+            return data, parse(data, source=file)
+        except ConfigError as exc:
+            raise ConfigError(f"{file}: {exc}") from exc
+
+    data, current = parsed(text)
+    listed = data.get("favourites", {})
+    blocks: list[str] = []
+    for key, new, existing in (
+        ("teams", teams, current.favourites.teams),
+        ("drivers", drivers, current.favourites.drivers),
+    ):
+        known = {f.id for f in existing}
+        fresh = [f for f in {f.id: f for f in new}.values() if f.id not in known]
+        if not fresh:
+            continue
+        kept = () if key in listed else existing
+        blocks += [_toml_entry(key, f) for f in (*kept, *fresh)]
+    if not blocks:
+        return current
+    head = text.rstrip("\n") + "\n\n" if text.strip() else ""
+    updated_text = head + "\n\n".join(blocks) + "\n"
+    _, updated = parsed(updated_text)
+    if write:
+        temporary = file.with_name(f".{file.name}.tmp")
+        try:
+            temporary.write_text(updated_text, encoding="utf-8")
+            os.replace(temporary, file)
+        except OSError as exc:
+            raise ConfigError(f"{file}: {exc.strerror or exc}") from exc
+    return updated
 
 
 def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:

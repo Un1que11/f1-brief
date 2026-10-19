@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "result": [
+    {
+      "update_id": 900001,
+      "message": {
+        "message_id": 11,
+        "from": {"id": 424242, "is_bot": false, "first_name": "Test"},
+        "chat": {"id": 424242, "first_name": "Test", "type": "private"},
+        "date": 1792130400,
+        "text": "/stories",
+        "entities": [{"offset": 0, "length": 8, "type": "bot_command"}]
+      }
+    },
+    {
+      "update_id": 900002,
+      "message": {
+        "message_id": 12,
+        "from": {"id": 515151, "is_bot": false, "first_name": "Stranger"},
+        "chat": {"id": 515151, "first_name": "Stranger", "type": "private"},
+        "date": 1792130410,
+        "text": "/unfollow 1",
+        "entities": [{"offset": 0, "length": 9, "type": "bot_command"}]
+      }
+    },
+    {
+      "update_id": 900003,
+      "callback_query": {
+        "id": "4711000000000000001",
+        "from": {"id": 424242, "is_bot": false, "first_name": "Test"},
+        "message": {
+          "message_id": 13,
+          "from": {"id": 777000, "is_bot": true, "first_name": "Test bot", "username": "test_bot"},
+          "chat": {"id": 424242, "first_name": "Test", "type": "private"},
+          "date": 1792130420,
+          "text": "#1 ..."
+        },
+        "chat_instance": "-1000000000000000001",
+        "data": "follow:1"
+      }
+    },
+    {
+      "update_id": 900004,
+      "edited_message": {
+        "message_id": 11,
+        "from": {"id": 424242, "is_bot": false, "first_name": "Test"},
+        "chat": {"id": 424242, "first_name": "Test", "type": "private"},
+        "date": 1792130400,
+        "edit_date": 1792130430,
+        "text": "/archive"
+      }
+    },
+    {
+      "update_id": 900005,
+      "callback_query": {
+        "id": "4711000000000000002",
+        "from": {"id": 424242, "is_bot": false, "first_name": "Test"},
+        "message": {
+          "message_id": 14,
+          "from": {"id": 777000, "is_bot": true, "first_name": "Test bot", "username": "test_bot"},
+          "chat": {"id": 424242, "first_name": "Test", "type": "private"},
+          "date": 1792130440,
+          "text": "..."
+        },
+        "chat_instance": "-1000000000000000001",
+        "data": "favs:1"
+      }
+    },
+    {
+      "update_id": 900006,
+      "message": {
+        "message_id": 15,
+        "from": {"id": 424242, "is_bot": false, "first_name": "Test"},
+        "chat": {"id": 424242, "first_name": "Test", "type": "private"},
+        "date": 1792130450,
+        "text": "/story@test_bot 1",
+        "entities": [{"offset": 0, "length": 15, "type": "bot_command"}]
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 """Command-line entry point."""
 
 import argparse
+import contextlib
 import json
 import re
 import sys
@@ -13,6 +14,7 @@ import httpx
 from f1brief import (
     __version__,
     after_qualifying,
+    bot,
     config,
     digest,
     drivers,
@@ -270,6 +272,40 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="run claude and show what it decided, but store nothing",
+    )
+
+    bot_cmd = commands.add_parser(
+        "bot",
+        help="the Telegram bot for hot stories: answers /stories, /follow, ... and the story "
+        "buttons, only in the configured chat (long polling; runs until stopped)",
+    )
+    bot_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories (default: {send_log.DEFAULT_STATE_FILE})",
+    )
+    bot_cmd.add_argument(
+        "--env-file",
+        default=telegram_send.DEFAULT_ENV_FILE,
+        metavar="PATH",
+        help=f"where to look for the Telegram settings (default: {telegram_send.DEFAULT_ENV_FILE})",
+    )
+    bot_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="answer the updates in --updates and print the replies: nothing is sent, stored "
+        "or written to the config, and no token is needed",
+    )
+    bot_cmd.add_argument(
+        "--updates",
+        metavar="PATH",
+        help="a saved getUpdates answer (or a JSON list of updates), for --dry-run",
+    )
+    bot_cmd.add_argument(
+        "--chat-id",
+        metavar="ID",
+        help=f"with --dry-run: the chat to accept (default: {telegram_send.CHAT_ID_VAR})",
     )
 
     forget_cmd = commands.add_parser(
@@ -937,6 +973,85 @@ def _cmd_quali(
     return 0
 
 
+class _DryRun(Exception):
+    """Rolls back what a dry run stored."""
+
+
+def _print_action(action: bot.Action) -> None:
+    if isinstance(action, bot.Answer):
+        print(f"[button answer] {action.text}\n")
+        return
+    print(action.text)
+    for row in action.buttons:
+        print(" ".join(f"[{b.text}]" for b in row))
+    print()
+
+
+def _cmd_bot(
+    state: str,
+    env_file: str,
+    dry_run: bool,
+    updates_path: str | None,
+    chat_id: str | None,
+    settings: config.Config,
+) -> int:
+    if dry_run != (updates_path is not None):
+        print("error: --dry-run and --updates go together", file=sys.stderr)
+        return 2
+    if chat_id is not None and not dry_run:
+        print("error: --chat-id only works with --dry-run", file=sys.stderr)
+        return 2
+    config_path = settings.source or config.DEFAULT_PATH
+
+    def add_favourites(
+        teams: Sequence[config.Favourite], drivers: Sequence[config.Favourite]
+    ) -> config.Favourites:
+        updated = config.add_favourites(config_path, teams, drivers, write=not dry_run)
+        if dry_run:
+            names = ", ".join(f.name for f in (*teams, *drivers))
+            print(f"dry run: {config_path} not changed (would add {names})", file=sys.stderr)
+        return updated.favourites
+
+    try:
+        if dry_run:
+            text = _read_text(updates_path)
+            if text is None:
+                return 1
+            raw = json.loads(text)
+            updates = raw.get("result") if isinstance(raw, dict) else raw
+            if not isinstance(updates, list):
+                print("error: --updates must hold a list of updates", file=sys.stderr)
+                return 1
+            chat = chat_id or telegram_send.load_chat_id(env_file=env_file)
+            with stories.StoryStore(state) as store:
+                handler = bot.Bot(store, chat, settings.favourites, add_favourites)
+                with contextlib.suppress(_DryRun), store.transaction():
+                    bot.handle_all(handler, updates, _now(), _print_action)
+                    raise _DryRun
+            print(f"dry run: {len(updates)} update(s), nothing sent or stored", file=sys.stderr)
+            return 0
+        credentials = telegram_send.load_credentials(env_file=env_file)
+        timeout = httpx.Timeout(15.0, read=bot.POLL_TIMEOUT_S + 15.0)
+        with stories.StoryStore(state) as store, httpx.Client(timeout=timeout) as client:
+            handler = bot.Bot(store, credentials.chat_id, settings.favourites, add_favourites)
+            print("listening for updates (Ctrl-C to stop)", file=sys.stderr)
+            bot.listen(bot.BotApi(credentials, client), handler)
+    except KeyboardInterrupt:
+        return 0
+    except json.JSONDecodeError as exc:
+        print(f"error: {updates_path}: not JSON: {exc}", file=sys.stderr)
+        return 1
+    except (
+        telegram_send.SendError,
+        bot.BotError,
+        send_log.StateError,
+        stories.StoryError,
+    ) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_detect_stories(
     days: int,
     state: str,
@@ -1097,6 +1212,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         return _cmd_run(
             args.days_before, args.state, args.dry_run, args.model, args.env_file, favourites
+        )
+    if args.command == "bot":
+        return _cmd_bot(
+            args.state, args.env_file, args.dry_run, args.updates, args.chat_id, settings
         )
     if args.command == "detect-stories":
         return _cmd_detect_stories(

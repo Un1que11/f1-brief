@@ -93,6 +93,17 @@ def load_credentials(
     return Credentials(token=found[TOKEN_VAR], chat_id=found[CHAT_ID_VAR])
 
 
+def load_chat_id(
+    env: Mapping[str, str] | None = None, env_file: str | Path = DEFAULT_ENV_FILE
+) -> str:
+    """Only the chat id, looked up like `load_credentials` (for what needs no token)."""
+    env = os.environ if env is None else env
+    chat_id = (env.get(CHAT_ID_VAR) or read_env_file(env_file).get(CHAT_ID_VAR) or "").strip()
+    if not chat_id:
+        raise SendError(f"{CHAT_ID_VAR} not set (in the environment or {env_file})")
+    return chat_id
+
+
 def redact(text: str, token: str) -> str:
     return text.replace(token, REDACTED) if token else text
 
