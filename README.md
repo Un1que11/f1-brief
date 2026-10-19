@@ -134,8 +134,27 @@ checked before, with the open stories, to `claude -p` (prompt: `src/f1brief/stor
 For each item claude attaches it to a story, starts a new one or ignores it. The source of every
 story and update is the item's own URL, headline and outlet, never claude's; a decision naming
 no item sent is rejected. Answered items are not sent again. `--dry-run` shows the decisions
-and stores nothing, `--prompt-only` prints the prompt without running claude. The bot and alerts
-come next (F23–F24).
+and stores nothing, `--prompt-only` prints the prompt without running claude. Alerts come next
+(F24).
+
+`f1brief bot` (F23) is the Telegram bot for the stories: a long-polling listener that runs until
+stopped (meant for its own launchd job with `KeepAlive`). It answers only the chat in
+`TELEGRAM_CHAT_ID`; updates from any other chat get no answer. Commands (Russian UI):
+`/stories` (followed and recent), `/story <id>` (timeline with sources), `/follow <id>`,
+`/unfollow <id>`, `/mute <id> <days>`, `/archive` (all, resolved included). Story messages
+carry "Отписаться" (one tap) or "Следить" buttons. Once a story is followed, the bot offers
+"Следить за <names>" for its drivers and teams that are not favourites yet; pressing it appends
+them to `config.toml` (people without a Jolpica id are skipped). Only one listener per bot can
+poll: a second one, or a webhook on the bot, stops it with an error.
+
+```bash
+uv run f1brief bot --dry-run --updates tests/fixtures/telegram/updates.json --chat-id 424242
+uv run f1brief bot                         # the listener (Ctrl-C to stop)
+```
+
+`--dry-run` answers saved updates (a `getUpdates` answer or a JSON list) and prints the replies
+and buttons: nothing is sent, the story changes are rolled back and `config.toml` is not
+written. It needs no token; the chat to accept is `--chat-id` or `TELEGRAM_CHAT_ID`.
 
 `python -m f1brief` works too, from inside the virtual environment.
 
