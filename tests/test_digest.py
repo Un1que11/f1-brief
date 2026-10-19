@@ -12,6 +12,7 @@ import pytest
 from f1brief import digest, facts
 from f1brief.cli import main
 from f1brief.config import DEFAULT_FAVOURITES
+from f1brief.stories import Entity, EntityKind, StoryStatus, StoryStore, Update
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 FACTS_BLOCK = re.compile(r"<facts>\n(.*)\n</facts>", re.DOTALL)
@@ -30,13 +31,36 @@ NAME_KEYS = {
     "url",
     "link",
     "title",
+    "headline",
+    "source",
 }
 
 
+def followed_stories(path: Path) -> dict[str, Any]:
+    """The `stories` section with one followed (synthetic) story and its update."""
+    with StoryStore(path) as store:
+        story = store.create(
+            "synthetic-seat",
+            "Синтетический сюжет",
+            "Синтетика: описание.",
+            StoryStatus.RUMOR,
+            [Entity(EntityKind.DRIVER, "bearman")],
+            Update(
+                "Synthetic seat headline", "https://example.com/seat", "Example News", "Да.", NOW
+            ),
+            NOW,
+        )
+        store.follow(story.id, NOW)
+        return facts.stories_facts(store, NOW, True, DEFAULT_FAVOURITES)
+
+
 @pytest.fixture(scope="module")
-def document() -> dict[str, Any]:
+def document(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    stories = followed_stories(tmp_path_factory.mktemp("stories") / "state.db")
     with facts_transport.client([]) as client:
-        return facts.collect(NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None)
+        return facts.collect(
+            NOW, DEFAULT_FAVOURITES, client, sleep=lambda _: None, stories=lambda: stories
+        )
 
 
 def names(value: Any, key: str | None = None) -> Iterator[str]:
@@ -100,7 +124,10 @@ def test_template_states_the_rules() -> None:
     assert "Every point names its source" in text
     assert "say plainly that it is\n   unknown. Never guess" in text
     sections = re.findall(r"^(\d)\. ", text.split("## Digest structure")[1], re.MULTILINE)
-    assert sections == ["1", "2", "3", "4", "5", "6", "7"]
+    assert sections == ["1", "2", "3", "4", "5", "6", "7", "8"]
+    assert "5. «Твои сюжеты», with exactly that heading (`stories`)" in text
+    assert "`rumor` is a rumour" in text
+    assert "a story update names its `source` and gives its `link`" in text
 
 
 def test_a_news_title_cannot_close_the_facts_block() -> None:
@@ -303,13 +330,15 @@ def test_cli_collects_when_no_document_is_given(
     from f1brief import cli
 
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now, favourites: STUB)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: STUB)
 
     assert main(["digest", "--prompt-only"]) == 0
     assert facts_of(capsys.readouterr().out) == STUB
 
     monkeypatch.setattr(
-        facts, "collect", lambda now, favourites: {"sections": {"race": None}, "missing": []}
+        facts,
+        "collect",
+        lambda now, favourites, stories=None: {"sections": {"race": None}, "missing": []},
     )
     assert main(["digest", "--prompt-only"]) == 1
 

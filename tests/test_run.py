@@ -30,9 +30,12 @@ class Pipeline:
     def __init__(self, document: dict[str, Any], text: str) -> None:
         self.document, self.text = document, text
         self.collected = self.generated = 0
+        self.stories: list[dict[str, Any]] = []
 
-    def collect(self, now: datetime, favourites: object) -> dict[str, Any]:
+    def collect(self, now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
         self.collected += 1
+        if stories is not None:
+            self.stories.append(stories())
         return self.document
 
     def generate(self, document: dict[str, Any], model: digest.ClaudeCli) -> str:
@@ -253,6 +256,20 @@ def test_a_custom_state_file(setup, tmp_path: Path) -> None:
     assert main(["run", "--state", str(path)]) == 0
     assert record(path=str(path)) is not None
     assert not (tmp_path / "state.db").exists()
+
+
+def test_the_digest_covers_the_stories_in_the_state_file(setup, tmp_path: Path) -> None:
+    pipeline, _ = setup
+    path = tmp_path / "elsewhere.db"
+    with SendLog(path) as log:
+        log.claim(2026, 17, datetime(2026, 10, 7, 8, tzinfo=UTC))
+        log.mark_sent(2026, 17, datetime(2026, 10, 7, 8, tzinfo=UTC), 2)
+
+    assert main(["run", "--state", str(path)]) == 0
+    (stories,) = pipeline.stories
+    assert stories["since"] == "2026-10-07T10:00:00+02:00"
+    assert stories["since_last_digest"] is True
+    assert stories["followed"] == []
 
 
 def test_an_unusable_state_file_is_an_error(
