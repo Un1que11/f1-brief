@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_PATH = Path("config.toml")
 
-LANGUAGES = ("ru",)  # languages that have prompts
+LANGUAGES = ("ru", "en", "pl")  # languages that have prompts (src/f1brief/prompts/<language>)
 TIMEZONES = ("Europe/Warsaw",)  # zones the code handles; schedule.WARSAW is used directly
 
 
@@ -31,10 +31,16 @@ class Favourite:
     name: str
     aliases: tuple[str, ...] = ()  # words that mark a news item as about them
     track_future: bool = False  # also follow news about their future in F1
+    names: tuple[tuple[str, str], ...] = ()  # (language, name form) pairs
 
     def __post_init__(self) -> None:
         if not self.aliases:
             object.__setattr__(self, "aliases", (self.name,))
+
+    def name_in(self, language: str) -> str | None:
+        """The name form configured for `language`, or None (the digest then uses the names
+        its facts give)."""
+        return dict(self.names).get(language)
 
 
 @dataclass(frozen=True)
@@ -119,7 +125,9 @@ def parse(data: Mapping[str, Any], source: Path | None = None) -> Config:
 
     language = _get(digest, "language", str, "digest.language", defaults.language)
     if language not in LANGUAGES:
-        raise ConfigError(f"digest.language: {language!r} has no prompts (supported: ru)")
+        raise ConfigError(
+            f"digest.language: {language!r} is not supported (supported: {', '.join(LANGUAGES)})"
+        )
 
     days = _get(digest, "days_before_fp1", int, "digest.days_before_fp1", defaults.days_before_fp1)
     if days < 0:
@@ -162,7 +170,7 @@ def _favourites(
         at = f"{where}[{n}]"
         if not isinstance(entry, dict):
             raise ConfigError(f"{at}: must be a table with id and name")
-        _no_unknown(entry, ("id", "name", "aliases", "track_future"), at)
+        _no_unknown(entry, ("id", "name", "aliases", "track_future", "names"), at)
         fav_id = _required_text(entry, "id", at)
         if fav_id != fav_id.lower() or " " in fav_id:
             raise ConfigError(f"{at}.id: {fav_id!r} is not a Jolpica id (lowercase, no spaces)")
@@ -181,9 +189,24 @@ def _favourites(
                 _required_text(entry, "name", at),
                 tuple(a.strip() for a in aliases),
                 track_future,
+                _names(entry, at),
             )
         )
     return tuple(result)
+
+
+def _names(entry: Mapping[str, Any], at: str) -> tuple[tuple[str, str], ...]:
+    # `names = { ru = "Джордж Расселл", pl = "George Russell" }`: the form for each language.
+    names = _get(entry, "names", dict, f"{at}.names", {})
+    for language, form in names.items():
+        if language not in LANGUAGES:
+            raise ConfigError(
+                f"{at}.names: {language!r} is not a supported language "
+                f"(supported: {', '.join(LANGUAGES)})"
+            )
+        if not isinstance(form, str) or not form.strip():
+            raise ConfigError(f"{at}.names.{language}: must be a non-empty string")
+    return tuple((language, form.strip()) for language, form in names.items())
 
 
 def _toml_entry(key: str, favourite: Favourite) -> str:
@@ -198,6 +221,9 @@ def _toml_entry(key: str, favourite: Favourite) -> str:
         lines.append(f"aliases = [{aliases}]")
     if favourite.track_future:
         lines.append("track_future = true")
+    if favourite.names:
+        forms = ", ".join(f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in favourite.names)
+        lines.append(f"names = {{ {forms} }}")
     return "\n".join(lines)
 
 
@@ -287,4 +313,4 @@ def _required_text(table: Mapping[str, Any], key: str, where: str) -> str:
     return value.strip()
 
 
-_KIND_NAMES = {str: "a string", int: "a whole number", bool: "true or false"}
+_KIND_NAMES = {str: "a string", int: "a whole number", bool: "true or false", dict: "a table"}

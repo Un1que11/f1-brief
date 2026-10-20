@@ -13,7 +13,7 @@ import pytest
 from test_bot import message, press, text_of
 from test_story_detection import OCON_SEAT, OCON_TALKS, attach, new
 
-from f1brief import cli, lifecycle
+from f1brief import cli, digest, lifecycle
 from f1brief import story_detection as sd
 from f1brief import telegram_send as ts
 from f1brief.bot import Bot, BotError, Reply
@@ -235,7 +235,7 @@ def test_a_new_story_cannot_start_resolved(store: StoryStore) -> None:
 
 
 def test_the_prompt_says_statuses_only_move_forward() -> None:
-    template = (Path(sd.__file__).parent / sd.DETECTION_TEMPLATE).read_text(encoding="utf-8")
+    template = digest.template(sd.DETECTION_TEMPLATE, None)
     assert "A status only moves forward" in template
     assert "never start\n   a new story as `resolved`" in template
 

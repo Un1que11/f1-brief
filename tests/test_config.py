@@ -114,7 +114,7 @@ def test_timezone_is_usable() -> None:
     ("text", "message"),
     [
         ("[digest\n", "not valid TOML"),
-        ('[digest]\nlanguage = "en"\n', "has no prompts"),
+        ('[digest]\nlanguage = "de"\n', r"'de' is not supported \(supported: ru, en, pl\)"),
         ("[digest]\nlanguage = 1\n", "digest.language: must be a string"),
         ("[digest]\ndays_before_fp1 = -1\n", "0 or more"),
         ("[digest]\ndays_before_fp1 = 1.5\n", "must be a whole number"),

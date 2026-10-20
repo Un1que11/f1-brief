@@ -201,7 +201,7 @@ def test_the_prompt_carries_only_the_new_items_and_the_open_stories(store: Story
 
 
 def test_the_template_has_no_facts_of_its_own() -> None:
-    text = digest.template(sd.DETECTION_TEMPLATE)
+    text = digest.template(sd.DETECTION_TEMPLATE, None)
     assert text.count(digest.FACTS_MARKER) == 1
     for name in ("Ocon", "Russell", "Bearman", "McLaren", "Haas", "Ferrari", "example.com"):
         assert name not in text

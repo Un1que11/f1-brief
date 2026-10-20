@@ -47,7 +47,7 @@ from f1brief.stories import (
     check_update,
 )
 
-DETECTION_TEMPLATE = "stories_prompt.md"
+DETECTION_TEMPLATE = "stories"  # prompts/stories.md, the same for every language
 DETECTION_SYSTEM_PROMPT = (
     "You sort F1 news items into developing storylines strictly from the document in the "
     "user's message. You have no tools and use no other knowledge. You answer with JSON only."
@@ -169,7 +169,7 @@ def build_document(store: StoryStore, items: Sequence[NewsItem]) -> dict[str, An
 
 
 def build_prompt(store: StoryStore, items: Sequence[NewsItem]) -> str:
-    return digest.build_prompt(build_document(store, items), DETECTION_TEMPLATE)
+    return digest.build_prompt(build_document(store, items), DETECTION_TEMPLATE, None)
 
 
 def parse_answer(text: str) -> list[Any]:

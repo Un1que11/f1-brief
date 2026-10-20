@@ -23,6 +23,15 @@ chat id stay in `.env`. Without the file the built-in defaults (identical to the
 file) apply; a file with a typo or a bad value is an error, not ignored. Use another file with
 `uv run f1brief --config PATH <command>` and check what is in effect with `uv run f1brief config`.
 
+`digest.language` is the language of the digest, the off-season summary and the message after
+qualifying: `ru` (the default), `en` or `pl`. Each language has its own prompt templates in
+`src/f1brief/prompts/<language>/`; they are word for word the same apart from the output
+language, and a test fails if their rules or sections drift apart. The bot's buttons and replies
+stay Russian for now. A favourite may give its name form per language, e.g.
+`names = { ru = "Джордж Расселл" }`: the digest then always uses that form in that language
+(otherwise the model picks one, which can differ between digests). News matching still uses
+`name` and `aliases`.
+
 `due` and `run` take their `--days-before` default from `digest.days_before_fp1`. Every
 collector iterates over the favourites lists: team form for each favourite team, driver form
 with the teammate comparison for each favourite driver, pace, track history, news tags and story
@@ -45,7 +54,7 @@ uv run f1brief track             # favourites at the next race's circuit, last 3
 uv run f1brief news --days 7     # news about the favourites and key topics (RSS)
 uv run f1brief weather           # forecast at the circuit for the next race weekend
 uv run f1brief facts --output facts.json   # every fact above as one JSON, with sources
-uv run f1brief digest                      # the Russian digest text, written by `claude -p`
+uv run f1brief digest                      # the digest text, written by `claude -p`
 uv run f1brief digest --facts facts.json --prompt-only   # the exact prompt, without claude
 uv run f1brief format --input digest.txt   # the digest as Telegram MarkdownV2 messages
 uv run f1brief send --input digest.txt --dry-run   # what would be sent, without sending
@@ -72,8 +81,8 @@ built from under `sources`; a section that could not be collected is `null` and 
 in `missing`.
 
 `digest` needs [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) on PATH and
-logged in. The prompt is `src/f1brief/digest_prompt.md` with the facts JSON inserted and nothing
-else; `claude` runs without tools, MCP servers or user settings, so the digest can only use
+logged in. The prompt is `src/f1brief/prompts/<language>/digest.md` with the facts JSON inserted and
+nothing else; `claude` runs without tools, MCP servers or user settings, so the digest can only use
 those facts. `--model` picks the model (default: claude's own), `--facts` reuses a saved
 document instead of collecting again.
 
@@ -112,7 +121,7 @@ the favourites, and when the next season starts. It goes out on the first run in
 14 days ago, and once per month like a round's digest (`forget --month` allows another send).
 It covers the news since the first day of the previous month. RSS feeds only carry their
 latest items, so every off-season run also keeps the relevant news it fetched in `state.db`,
-and the summary reads it back. The prompt is `src/f1brief/summary_prompt.md`, with the same
+and the summary reads it back. The prompt is `src/f1brief/prompts/<language>/summary.md`, with the same
 rules as the digest's. `summary` writes one on any day without sending it (`--prompt-only`
 for the prompt); it reads the archive but adds nothing to it.
 
@@ -123,7 +132,7 @@ from two hours after the qualifying start until the race starts, once per round 
 Jolpica has not published the classification yet, the run sends nothing and the next one tries
 again. The facts are the qualifying classification, the favourite drivers' recent form (grid
 against finish) and the news since FP1; Jolpica has no starting grid before the race, so grid
-penalties come only from the news. The prompt is `src/f1brief/qualifying_prompt.md`. `quali`
+penalties come only from the news. The prompt is `src/f1brief/prompts/<language>/qualifying.md`. `quali`
 writes the message for any round without sending it (`--round`, `--season`; `--driver` and
 `--team` to try other favourites; `--prompt-only` for the prompt).
 
@@ -133,7 +142,7 @@ its timeline of updates (every one with the URL of its source) and whether it is
 muted. `detect-stories` fills them (F22): it takes the hot news items of the last 7 days
 (`--days`), those about a favourite or an entity of a followed story that touch contracts,
 seats, transfers, team principals, regulations or penalties, and sends the ones it has not
-checked before, with the open stories, to `claude -p` (prompt: `src/f1brief/stories_prompt.md`).
+checked before, with the open stories, to `claude -p` (prompt: `src/f1brief/prompts/stories.md`).
 For each item claude attaches it to a story, starts a new one or ignores it. The source of every
 story and update is the item's own URL, headline and outlet, never claude's; a decision naming
 no item sent is rejected. Answered items are not sent again. `--dry-run` shows the decisions

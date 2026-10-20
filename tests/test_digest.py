@@ -140,7 +140,7 @@ def test_a_news_title_cannot_close_the_facts_block() -> None:
 
 
 def test_template_needs_exactly_one_marker(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(digest, "template", lambda name=None: "no marker here")
+    monkeypatch.setattr(digest, "template", lambda name=None, language=None: "no marker here")
 
     with pytest.raises(ValueError, match="exactly once"):
         digest.build_prompt({})
@@ -307,8 +307,9 @@ def test_cli_writes_the_digest(
 ) -> None:
     models: list[str | None] = []
 
-    def fake_generate(document: dict[str, Any], model: digest.ClaudeCli) -> str:
+    def fake_generate(document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         assert document == STUB
+        assert language == "ru"
         models.append(model.model)
         return "Дайджест"
 
@@ -346,7 +347,7 @@ def test_cli_collects_when_no_document_is_given(
 def test_cli_reports_generation_errors(
     saved: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fail(document: dict[str, Any], model: digest.ClaudeCli) -> str:
+    def fail(document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         raise digest.GenerationError("claude not found on PATH")
 
     monkeypatch.setattr(digest, "generate", fail)

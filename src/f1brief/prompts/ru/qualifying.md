@@ -27,8 +27,9 @@ Write a short message from it for one reader, who gets it on Telegram before the
 7. The favourites are the drivers with `favourite: true` in `qualifying.classification`, listed
    in `qualifying.favourites` with their teammate. When two favourites are teammates, the
    second one has `head_to_head_in` instead of the comparison: compare them once. Call them
-   by the names the document gives them. A driver in `favourite_drivers_not_classified` has
-   no qualifying result: say so.
+   by the names the document gives them, except that a favourite whose entry in `favourites`
+   has a `ru` form in `names` is always called by that form. A driver in
+   `favourite_drivers_not_classified` has no qualifying result: say so.
 8. In `drivers`, each round's `grid` and `finish` show how the favourite driver's recent
    starting positions turned into results; points there are Grand Prix points only.
 

@@ -31,6 +31,7 @@ class Pipeline:
         self.document, self.text = document, text
         self.collected = self.generated = 0
         self.stories: list[dict[str, Any]] = []
+        self.languages: list[str] = []
 
     def collect(self, now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
         self.collected += 1
@@ -38,8 +39,9 @@ class Pipeline:
             self.stories.append(stories())
         return self.document
 
-    def generate(self, document: dict[str, Any], model: digest.ClaudeCli) -> str:
+    def generate(self, document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         self.generated += 1
+        self.languages.append(language)
         return self.text
 
 
@@ -83,6 +85,16 @@ def test_sends_once_when_due(setup, capsys: pytest.CaptureFixture[str]) -> None:
     assert len(recorder.requests) == 1
     assert pipeline.collected == 1
     assert "Already sent at Wed 21 Oct 10:00 (1 message(s))." in capsys.readouterr().err
+    assert pipeline.languages == ["ru"]  # the default language
+
+
+def test_the_digest_is_written_in_the_configured_language(setup, tmp_path: Path) -> None:
+    pipeline, recorder = setup
+    (tmp_path / "config.toml").write_text('[digest]\nlanguage = "pl"\n', encoding="utf-8")
+
+    assert main(["run"]) == 0
+    assert pipeline.languages == ["pl"]
+    assert len(recorder.requests) == 1
 
 
 def test_does_nothing_before_the_window(
@@ -148,7 +160,7 @@ def test_facts_about_another_round_are_not_sent(setup, capsys: pytest.CaptureFix
 def test_a_generation_failure_records_nothing(setup, monkeypatch: pytest.MonkeyPatch) -> None:
     _, recorder = setup
 
-    def fail(document: dict[str, Any], model: digest.ClaudeCli) -> str:
+    def fail(document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         raise digest.GenerationError("claude timed out after 600s")
 
     monkeypatch.setattr(digest, "generate", fail)
@@ -237,7 +249,9 @@ def test_a_round_claimed_by_another_run_is_not_sent(
 ) -> None:
     _, recorder = setup
 
-    def generate_while_another_run_sends(document: dict[str, Any], model: Any) -> str:
+    def generate_while_another_run_sends(
+        document: dict[str, Any], model: Any, language: str
+    ) -> str:
         with SendLog("state.db") as other:
             assert other.claim(2026, 18, IN_WINDOW)
         return TWO_PARTS

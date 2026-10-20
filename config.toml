@@ -2,7 +2,8 @@
 # Read by `f1brief.config`; every command takes `--config PATH` (default: ./config.toml).
 
 [digest]
-# Language of the texts sent to Telegram (ISO 639-1). Only "ru" has prompts today.
+# Language of the digest, the off-season summary and the message after qualifying:
+# "ru", "en" or "pl". The bot's buttons and replies stay Russian for now.
 language = "ru"
 # The send window opens at local midnight this many days before the local date of FP1.
 days_before_fp1 = 2
@@ -16,6 +17,8 @@ timezone = "Europe/Warsaw"
 #   name    - how the team or driver is named in the digest
 #   aliases - words that mark a news item as being about them (default: the name)
 #   track_future - also follow news about their future in F1 (contract, moves)
+#   names   - optional name form per language, always used in texts in that language,
+#             e.g. names = { ru = "Джордж Расселл", pl = "George Russell" }
 
 [[favourites.teams]]
 id = "mclaren"

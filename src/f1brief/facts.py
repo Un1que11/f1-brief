@@ -25,7 +25,7 @@ from f1brief import (
     track_history,
     weather,
 )
-from f1brief.config import Favourites
+from f1brief.config import Favourite, Favourites
 from f1brief.schedule import WARSAW, Race
 from f1brief.send_log import StateError
 from f1brief.stories import EntityKind, StoryError, StoryStore, StoryUpdate
@@ -143,11 +143,18 @@ def _change(change: standings.StandingChange, favourite: bool) -> dict[str, Any]
 
 
 def favourites_facts(favourites: Favourites) -> dict[str, Any]:
+    """The favourites as the prompts see them. `names` (only when configured) holds the name
+    form per language; the facts stay language-neutral and each template picks its own."""
+
+    def entry(fav: Favourite, **extra: Any) -> dict[str, Any]:
+        out = {"id": fav.id, "name": fav.name, **extra}
+        if fav.names:
+            out["names"] = dict(fav.names)
+        return out
+
     return {
-        "teams": [{"id": t.id, "name": t.name} for t in favourites.teams],
-        "drivers": [
-            {"id": d.id, "name": d.name, "track_future": d.track_future} for d in favourites.drivers
-        ],
+        "teams": [entry(t) for t in favourites.teams],
+        "drivers": [entry(d, track_future=d.track_future) for d in favourites.drivers],
     }
 
 
