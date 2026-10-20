@@ -4,6 +4,25 @@ A pre-race-weekend F1 digest delivered to Telegram. About two days before FP1 it
 facts (calendar, standings, form, pace, weather, news) and turns them into a short digest.
 It runs locally on macOS. See `CLAUDE.md` for the full spec and `BACKLOG.md` for the roadmap.
 
+## Quick start (macOS)
+
+```bash
+git clone https://github.com/Un1que11/f1-brief && cd f1-brief
+./setup.sh
+```
+
+`setup.sh` does everything and is safe to re-run (e.g. after `git pull`): installs `uv` if it is
+missing, checks Claude Code, runs `uv sync`, sets up the Telegram bot in `.env` (asks for the
+token, checks it, and finds your chat id after you send the bot any message), sends a test
+message, seeds the first stories, and installs two launchd agents: `local.f1brief.run` (hourly:
+digest, message after qualifying, story alerts) and `local.f1brief.bot` (the always-on bot for
+`/stories` and the Follow / Unfollow buttons).
+
+```bash
+./setup.sh status      # are both agents running
+./setup.sh uninstall   # stop and remove both agents (state.db and .env are kept)
+```
+
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (it installs Python 3.12+ for you if needed)
@@ -212,6 +231,19 @@ uv run f1brief archive-page --output - > /tmp/archive.html   # or to stdout
 ```
 
 `python -m f1brief` works too, from inside the virtual environment.
+
+To keep the bot running in the background (starts at login, restarted if it stops, at most every
+30 s so a bad token cannot loop fast), install its own LaunchAgent (F36):
+
+```bash
+uv run f1brief launchd --job bot --output ~/Library/LaunchAgents/local.f1brief.bot.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.f1brief.bot.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.f1brief.bot.plist
+```
+
+Logs go to `~/Library/Logs/f1brief/bot.log` and `bot.err.log`. Stop it before running
+`f1brief bot` by hand (`launchctl bootout gui/$(id -u)/local.f1brief.bot`): only one listener
+may poll.
 
 ## Schedule on the Mac (launchd)
 
