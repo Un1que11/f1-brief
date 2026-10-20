@@ -61,6 +61,7 @@ uv run f1brief quali --round 17 --prompt-only   # the prompt of the message afte
 uv run f1brief quali                       # that message for the current weekend (never sent)
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
+uv run f1brief seed-stories --dry-run     # what claude makes of the articles in story_seeds.toml
 uv run f1brief alerts --dry-run           # the story alerts due now (not sent)
 uv run f1brief archive-page               # the story archive as a static HTML page
 uv run f1brief launchd                    # the macOS LaunchAgent plist for `run` (printed)
@@ -137,6 +138,17 @@ For each item claude attaches it to a story, starts a new one or ignores it. The
 story and update is the item's own URL, headline and outlet, never claude's; a decision naming
 no item sent is rejected. Answered items are not sent again. `--dry-run` shows the decisions
 and stores nothing, `--prompt-only` prints the prompt without running claude.
+
+Seed stories (F27): `story_seeds.toml` lists articles to start stories from, each described as
+a feed would carry it (link, headline, outlet, date, a short summary). `f1brief seed-stories`
+sends the ones no story has an update from yet through the same detection as `detect-stories`
+(same prompt, same checks, same storing; no news feed is read), so claude decides the story's
+title, summary, status and entities, and every update keeps the article's URL as its source. A
+seed with `follow = true` (the default) then follows the story it started or joined, in the same
+transaction. A seed claude ignored is sent again by the next run; one that is in a story is never
+sent again, so a story unfollowed later stays unfollowed. The checked-in seeds are the two
+articles about Bearman replacing Hamilton at Ferrari; run `uv run f1brief seed-stories` once
+(`--dry-run` to see claude's decision first, `--prompt-only` for the prompt).
 
 Story alerts (F24): when a followed story gets an update (recorded after it was followed),
 `f1brief alerts` sends a short message with what changed, the source and an "Отписаться" button;
