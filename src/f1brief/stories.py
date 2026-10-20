@@ -132,6 +132,15 @@ class StoryStatus(StrEnum):
     RESOLVED = "resolved"
 
 
+# How a status reads in the Russian UI (bot replies, alerts, the archive page).
+STATUS_RU = {
+    StoryStatus.RUMOR: "слух",
+    StoryStatus.DEVELOPING: "развивается",
+    StoryStatus.CONFIRMED: "подтверждено",
+    StoryStatus.DENIED: "опровергнуто",
+    StoryStatus.RESOLVED: "завершён",
+}
+
 # A story's lifecycle (see "Hot stories" in CLAUDE.md): rumor -> developing -> confirmed or
 # denied -> resolved. A status only moves forward, it may skip a step (an official
 # announcement can confirm a rumour), and only a confirmed or denied story becomes resolved.

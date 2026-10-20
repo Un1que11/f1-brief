@@ -6,3 +6,5 @@ __pycache__/
 cache/
 .fastf1_cache/
 .DS_Store
+archive.html
+f1-archive-*.html

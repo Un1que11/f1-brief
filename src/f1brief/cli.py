@@ -16,6 +16,7 @@ from f1brief import (
     __version__,
     after_qualifying,
     alerts,
+    archive_page,
     bot,
     config,
     digest,
@@ -376,6 +377,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--chat-id",
         metavar="ID",
         help=f"with --dry-run: the chat to accept (default: {telegram_send.CHAT_ID_VAR})",
+    )
+
+    archive_cmd = commands.add_parser(
+        "archive-page",
+        help="write the story archive as a static HTML page (timelines with sources; filters "
+        "followed / all / resolved); the bot sends the same page with its /archive reply",
+    )
+    archive_cmd.add_argument(
+        "--output",
+        default=archive_page.DEFAULT_OUTPUT,
+        metavar="PATH",
+        help=f"where to write the page, '-' for stdout (default: {archive_page.DEFAULT_OUTPUT})",
+    )
+    archive_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories (default: {send_log.DEFAULT_STATE_FILE})",
     )
 
     forget_cmd = commands.add_parser(
@@ -1155,6 +1174,9 @@ def _print_action(action: bot.Action) -> None:
     if isinstance(action, bot.Answer):
         print(f"[button answer] {action.text}\n")
         return
+    if isinstance(action, bot.Document):
+        print(f"[file {action.filename}, {len(action.content)} bytes] {action.caption}\n")
+        return
     print(action.text)
     for row in action.buttons:
         print(" ".join(f"[{b.text}]" for b in row))
@@ -1382,6 +1404,32 @@ def _cmd_forget(
     return 0
 
 
+def _cmd_archive_page(output: str, state: str) -> int:
+    if not Path(state).is_file():
+        print(f"error: no state file {state} (no stories yet?)", file=sys.stderr)
+        return 1
+    now = _now()
+    try:
+        with stories.StoryStore(state) as store:
+            page = archive_page.build(store, now)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if output == "-":
+        sys.stdout.write(page)
+        return 0
+    path = Path(output).expanduser().resolve()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(page, encoding="utf-8")
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {path}")
+    print(f"open it with: open {path}")
+    return 0
+
+
 def _cmd_launchd(
     output: str | None,
     workdir: str,
@@ -1512,6 +1560,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_seed_stories(
             args.seeds, args.state, args.model, args.prompt_only, args.dry_run, favourites
         )
+    if args.command == "archive-page":
+        return _cmd_archive_page(args.output, args.state)
     if args.command == "launchd":
         return _cmd_launchd(
             args.output, args.workdir, args.interval, args.log_dir, args.uv, args.claude

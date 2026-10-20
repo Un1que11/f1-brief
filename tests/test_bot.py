@@ -4,6 +4,7 @@
 a mock Bot API transport: nothing reaches Telegram."""
 
 import json
+import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -351,7 +352,26 @@ def test_archive_lists_every_story_including_resolved(store: StoryStore, handler
 
 
 def test_an_empty_archive(handler: Bot) -> None:
-    assert "Архив пуст" in text_of(handler.handle(message("/archive"), NOW))
+    actions = handler.handle(message("/archive"), NOW)
+    assert "Архив пуст" in text_of(actions)
+    assert not [a for a in actions if isinstance(a, bot.Document)]
+
+
+def test_archive_sends_the_page_after_the_list(store: StoryStore, handler: Bot) -> None:
+    story = seed(store)
+    store.follow(story.id, NOW)
+
+    actions = handler.handle(message("/archive"), NOW)
+
+    assert isinstance(actions[-1], bot.Document)
+    assert all(isinstance(a, Reply) for a in actions[:-1])
+    page = actions[-1]
+    assert page.filename == "f1-archive-2026-10-19.html"
+    assert page.mime_type == "text/html"
+    assert page.caption == bot.ARCHIVE_CAPTION
+    html = page.content.decode("utf-8")
+    assert '<article class="story followed" id="story-1">' in html
+    assert "https://example.com/story-1" in html
 
 
 # --- following a story's entities -------------------------------------------------------------
@@ -527,7 +547,10 @@ class MockTelegram:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         method = request.url.path.rsplit("/", 1)[-1]
-        body = json.loads(request.content)
+        if request.headers["content-type"].startswith("multipart/form-data"):
+            body = {"multipart": request.read()}
+        else:
+            body = json.loads(request.content)
         self.requests.append((method, body))
         if method == "getUpdates":
             answer = self.polls.pop(0) if self.polls else []
@@ -563,6 +586,35 @@ def test_replies_carry_the_inline_keyboard(store: StoryStore, handler: Bot) -> N
         ]
     }
     assert mock.sent("getUpdates")[0]["allowed_updates"] == ["message", "callback_query"]
+
+
+def test_the_archive_page_goes_as_a_document(store: StoryStore, handler: Bot) -> None:
+    seed(store)
+    mock = MockTelegram([[message("/archive", update_id=7)]])
+
+    bot.listen(api(mock), handler, clock=lambda: NOW, sleep=lambda s: None, polls=1)
+
+    assert [m for m, _ in mock.requests] == ["getUpdates", "sendMessage", "sendDocument"]
+    [sent] = mock.sent("sendDocument")
+    body = sent["multipart"]
+    assert b'name="chat_id"\r\n\r\n424242\r\n' in body
+    assert bot.ARCHIVE_CAPTION.encode("utf-8") in body
+    assert b'name="document"; filename="f1-archive-2026-10-19.html"' in body
+    assert b"Content-Type: text/html" in body
+    assert b"<!doctype html>" in body
+    assert TOKEN.encode() not in body
+
+
+def test_a_refused_document_is_reported_without_the_token(store: StoryStore) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"ok": False, "description": "Bad Request: file empty"})
+
+    client = httpx.Client(transport=httpx.MockTransport(refuse))
+    telegram = bot.BotApi(ts.Credentials(TOKEN, CHAT), client)
+    with pytest.raises(bot.BotError) as raised:
+        telegram.send(bot.Document("a.html", b"x", "text/html", "c"))
+    assert str(raised.value) == "sendDocument: Bad Request: file empty"
+    assert raised.value.status == 400
 
 
 def test_the_listener_confirms_updates_with_the_next_offset(
@@ -786,6 +838,19 @@ def test_dry_run_answers_the_saved_updates_and_keeps_nothing(
     with StoryStore(cli_dir / "state.db") as opened:
         assert opened.subscription(1) is None
     assert (cli_dir / "config.toml").read_text(encoding="utf-8") == config_before
+
+
+def test_dry_run_shows_the_archive_page_as_a_file(
+    cli_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (cli_dir / "archive.json").write_text(json.dumps([message("/archive")]), encoding="utf-8")
+
+    assert main(["bot", "--dry-run", "--updates", "archive.json", "--chat-id", CHAT]) == 0
+
+    out = capsys.readouterr().out
+    assert "Все сюжеты (1):" in out
+    assert re.search(r"\[file f1-archive-\d{4}-\d{2}-\d{2}\.html, \d+ bytes\] Архив страницей", out)
+    assert not list(cli_dir.glob("*.html"))  # sent as a file, nothing written locally
 
 
 def test_dry_run_takes_the_chat_from_the_environment(
