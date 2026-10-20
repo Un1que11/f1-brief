@@ -38,6 +38,20 @@
 - [x] F27. Seed story, created through the normal pipeline (not hardcoded): "Bearman to Ferrari in 2028 in place of Hamilton?" (status rumor), entities Bearman, Haas, Ferrari, Hamilton, followed by default. Sources to start from: https://www.gpfans.com/en/f1-news/1089724/new-lewis-hamilton-ferrari-contract-could-force-f1-star-to-leave-team/ and https://www.f1oversteer.com/news/ferrari-will-have-a-77-million-problem-if-they-replace-lewis-hamilton-with-oliver-bearman/ — check they still resolve; if not, mark BLOCKED and ask Misha for a link.
 - [x] F28. Optional: a static HTML archive page generated locally (timeline per story, filters followed / all / resolved), opened from the `/archive` reply.
 
+- [ ] F36. [light] LaunchAgent for the bot: `f1brief launchd --job bot` writes a second plist (`local.f1brief.bot`) that starts `f1brief bot` at login with `KeepAlive` (restart on crash, throttle so a bad token does not loop fast), same PATH/workdir handling and log dir as the `run` plist (`bot.log`, `bot.err.log`). `--job run` stays the default. README: install, check, uninstall, and a note that only one listener may poll. Tests: the generated plist for both jobs.
+
+## Phase 5b — Docker
+- [ ] F37. Docker image: `Dockerfile` on `python:3.12-slim` with uv (dependencies in a cached layer from `uv.lock`), Node + Claude Code CLI for `claude -p`, tzdata with `TZ=Europe/Warsaw`, non-root user, `.dockerignore` (.venv, .env, state.db, caches). No secrets or state in the image. Builds for `linux/arm64` and `linux/amd64`. Claude Code in a container cannot use the Mac's Keychain login: find the supported headless auth (e.g. a long-lived token from `claude setup-token` passed as an environment variable; check the current Claude Code docs, don't guess), document it, and fail with a clear message when it is missing.
+- [ ] F38. `compose.yaml`:
+  - `bot`: `f1brief bot`, `restart: unless-stopped` (one listener only: never scale it).
+  - `runner`: `f1brief run` every hour via supercronic in the same image.
+  - Data: named volumes `f1-state` (state.db, shared by both services) and `f1-cache` (FastF1 cache); `config.toml` bind-mounted (the bot's "Follow <names>" button writes to it, so not read-only) and `.env` via `env_file`.
+  - Memory and CPU: `mem_limit` / `mem_reservation`, `cpus` and `pids_limit` per service (start with bot 128m, runner 1g because FastF1/pandas loads sessions; measure with `docker stats` and record the numbers in the PR).
+  - Networks: one `egress` network for outbound calls only (Telegram, Jolpica, FastF1, RSS, Open-Meteo, Anthropic); no ports published.
+  - Hardening: `read_only: true` with `tmpfs` /tmp and writable volumes only where needed, `cap_drop: [ALL]`, `no-new-privileges`, json-file log rotation.
+  Depends on F37.
+- [ ] F39. Easy start: `./setup.sh --docker` (checks Docker is running, does the same `.env` / Telegram / chat id steps, `docker compose up -d --build`, sends the test message, seeds the stories inside the container) and `./setup.sh --docker status|logs|down`. Switching to Docker unloads the launchd agents and switching back stops the containers, so two bot listeners never poll at once. README section "Docker". Depends on F38.
+
 ## Phase 6 — languages and accounts (approved 2026-10-20: tasks in order)
 - [x] F29. Digest language: `ru`, `en`, `pl` for the existing global `[digest] language` (default `ru`). Prompt templates per language for the digest, the off-season summary and the post-qualifying message, all with the same facts-only and sources rules; a test that every language's template has the same sections and rules. Per-language name forms for drivers and teams (this covers the `name_ru` idea). Update CLAUDE.md where it says "in Russian".
 - [ ] F30. Bot UI and alert texts from a message catalog (ru / en / pl), using the global language until F34; dates, times and numbers formatted per locale (24-hour times, decimal comma for ru / pl); a test that every key exists in all three languages. Update "Bot commands (Russian UI)" in CLAUDE.md.
