@@ -62,6 +62,7 @@ uv run f1brief quali                       # that message for the current weeken
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
 uv run f1brief alerts --dry-run           # the story alerts due now (not sent)
+uv run f1brief archive-page               # the story archive as a static HTML page
 uv run f1brief launchd                    # the macOS LaunchAgent plist for `run` (printed)
 ```
 
@@ -184,6 +185,19 @@ uv run f1brief bot                         # the listener (Ctrl-C to stop)
 `--dry-run` answers saved updates (a `getUpdates` answer or a JSON list) and prints the replies
 and buttons: nothing is sent, the story changes are rolled back and `config.toml` is not
 written. It needs no token; the chat to accept is `--chat-id` or `TELEGRAM_CHAT_ID`.
+
+The archive is also a static HTML page (F28): every story with its timeline, each update
+linking to its source, and three filters, "Слежу" (followed now), "Все" and "Завершённые". It
+opens on the followed stories, or on all of them when none is followed. The page has no script
+(filters are plain CSS) and loads nothing from elsewhere, so it works opened as a file. The
+bot's `/archive` reply sends it as an HTML file (`f1-archive-<date>.html`) after the list; tap
+it in Telegram to open it. To make it locally:
+
+```bash
+uv run f1brief archive-page                 # writes archive.html (git-ignored)
+open archive.html
+uv run f1brief archive-page --output - > /tmp/archive.html   # or to stdout
+```
 
 `python -m f1brief` works too, from inside the virtual environment.
 

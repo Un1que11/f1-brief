@@ -13,9 +13,12 @@ Only updates from the configured chat are handled; any other update is skipped w
 answer. Replies are plain text (no parse mode), so story titles and summaries need no
 escaping. The token is part of every Bot API URL, so it is redacted from every error here.
 
-`Bot.handle` turns one update into the actions to take (`Reply`, `Answer`) and changes the
-story store; `BotApi` talks to Telegram; `listen` connects the two. `OffsetStore` keeps the
-`getUpdates` offset in the state file, so a restarted listener does not answer an update twice.
+`/archive` also sends the archive as a static HTML page (F28, `archive_page`) as a file.
+
+`Bot.handle` turns one update into the actions to take (`Reply`, `Answer`, `Document`) and
+changes the story store; `BotApi` talks to Telegram; `listen` connects the two. `OffsetStore`
+keeps the `getUpdates` offset in the state file, so a restarted listener does not answer an
+update twice.
 """
 
 import sqlite3
@@ -30,10 +33,12 @@ from typing import Any
 
 import httpx
 
+from f1brief import archive_page
 from f1brief.config import ConfigError, Favourite, Favourites
 from f1brief.schedule import WARSAW
 from f1brief.send_log import StateError
 from f1brief.stories import (
+    STATUS_RU,
     Entity,
     EntityKind,
     Story,
@@ -58,14 +63,6 @@ RECENT_STORIES = 10
 # 404) or another listener or a webhook on the same bot (409).
 FATAL_STATUSES = frozenset({401, 404, 409})
 
-STATUS_RU = {
-    StoryStatus.RUMOR: "слух",
-    StoryStatus.DEVELOPING: "развивается",
-    StoryStatus.CONFIRMED: "подтверждено",
-    StoryStatus.DENIED: "опровергнуто",
-    StoryStatus.RESOLVED: "завершён",
-}
-
 HELP = (
     "Команды:\n"
     "/stories — сюжеты, за которыми ты следишь, и недавние\n"
@@ -77,6 +74,11 @@ HELP = (
 )
 
 FOLLOW, UNFOLLOW, FAVOURITES = "follow", "unfollow", "favs"
+
+ARCHIVE_CAPTION = (
+    "Архив страницей: открой файл в браузере. Фильтры: слежу / все / завершённые, "
+    "у каждого обновления — ссылка на источник."
+)
 
 
 class BotError(Exception):
@@ -117,7 +119,17 @@ class Answer:
     text: str
 
 
-Action = Reply | Answer
+@dataclass(frozen=True)
+class Document:
+    """A file sent to the chat (the archive page), with a short caption."""
+
+    filename: str
+    content: bytes = field(repr=False)
+    mime_type: str
+    caption: str
+
+
+Action = Reply | Answer | Document
 
 
 @dataclass(frozen=True)
@@ -243,7 +255,7 @@ class Bot:
         if name == "stories":
             return self._stories(now)
         if name == "archive":
-            return self._archive()
+            return self._archive(now)
         if name not in ("story", "follow", "unfollow", "mute"):
             return _replies(f"Не знаю команду /{name}.\n\n{HELP}")
         story = self._story_arg(args)
@@ -293,7 +305,7 @@ class Bot:
         buttons += tuple((Button(f"Следить #{s.id}", f"{FOLLOW}:{s.id}"),) for s in recent)
         return _replies("\n".join(lines), buttons)
 
-    def _archive(self) -> list[Action]:
+    def _archive(self, now: datetime) -> list[Action]:
         every = self.store.stories()
         if not every:
             return _replies("Архив пуст: сюжетов пока нет.")
@@ -301,7 +313,13 @@ class Bot:
         lines = [f"Все сюжеты ({len(every)}):"]
         lines += [_line(s) + (" — следишь" if s.id in followed else "") for s in every]
         lines += ["", "Подробнее: /story <номер>"]
-        return _replies("\n".join(lines))
+        page = Document(
+            archive_page.filename(now),
+            archive_page.build(self.store, now).encode("utf-8"),
+            "text/html",
+            ARCHIVE_CAPTION,
+        )
+        return [*_replies("\n".join(lines)), page]
 
     def _timeline(self, story: Story) -> list[Action]:
         following = self._following(story.id)
@@ -435,11 +453,19 @@ class BotApi:
     credentials: Credentials
     client: httpx.Client
 
-    def _call(self, method: str, payload: dict[str, Any], timeout: float | None = None) -> Any:
+    def _call(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        timeout: float | None = None,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+    ) -> Any:
         url = f"{API_URL}/bot{self.credentials.token}/{method}"
         extra: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        # A file goes as multipart/form-data, everything else as JSON.
+        extra.update({"data": payload, "files": files} if files else {"json": payload})
         try:
-            response = self.client.post(url, json=payload, **extra)
+            response = self.client.post(url, **extra)
         except httpx.HTTPError as exc:
             reason = redact(str(exc) or type(exc).__name__, self.credentials.token)
             raise BotError(f"{method} failed: {reason}") from None
@@ -473,6 +499,11 @@ class BotApi:
         if isinstance(action, Answer):
             payload = {"callback_query_id": action.callback_id, "text": action.text}
             self._call("answerCallbackQuery", payload)
+            return
+        if isinstance(action, Document):
+            fields = {"chat_id": self.credentials.chat_id, "caption": action.caption}
+            files = {"document": (action.filename, action.content, action.mime_type)}
+            self._call("sendDocument", fields, files=files)
             return
         payload: dict[str, Any] = {
             "chat_id": self.credentials.chat_id,
