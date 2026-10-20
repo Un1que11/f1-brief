@@ -34,6 +34,7 @@ from f1brief import (
     standings,
     stories,
     story_detection,
+    story_seeds,
     telegram_format,
     telegram_send,
     track_history,
@@ -314,6 +315,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="run claude and show what it decided, but store nothing",
+    )
+
+    seed_cmd = commands.add_parser(
+        "seed-stories",
+        help="send the articles of the seeds file that no story has yet through story "
+        "detection and follow the stories they start (asks claude -p; sends nothing)",
+    )
+    seed_cmd.add_argument(
+        "--seeds",
+        default=str(story_seeds.DEFAULT_PATH),
+        metavar="PATH",
+        help=f"TOML file with the seed articles (default: {story_seeds.DEFAULT_PATH})",
+    )
+    seed_cmd.add_argument(
+        "--state",
+        default=send_log.DEFAULT_STATE_FILE,
+        metavar="PATH",
+        help=f"SQLite file with the stories (default: {send_log.DEFAULT_STATE_FILE})",
+    )
+    seed_cmd.add_argument("--model", help="model for claude -p (default: claude's own)")
+    seed_cmd.add_argument(
+        "--prompt-only", action="store_true", help="print the prompt instead of running claude"
+    )
+    seed_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run claude and show what it decided, but store and follow nothing",
     )
 
     bot_cmd = commands.add_parser(
@@ -1256,6 +1284,69 @@ def _cmd_detect_stories(
     return 0
 
 
+def _cmd_seed_stories(
+    seeds_path: str,
+    state: str,
+    model: str | None,
+    prompt_only: bool,
+    dry_run: bool,
+    favourites: config.Favourites,
+) -> int:
+    try:
+        seeds = story_seeds.load(seeds_path)
+    except story_seeds.SeedError as exc:
+        print(f"error: seeds: {exc}", file=sys.stderr)
+        return 2
+    now = _now()
+    try:
+        with stories.StoryStore(state) as store:
+            fresh = set(store.without_updates([s.url for s in seeds]))
+            seeds = tuple(s for s in seeds if s.url in fresh)
+            if not seeds:
+                print("no seed article left: each is in a story already")
+                return 0
+            items = story_seeds.items(seeds, favourites, now)
+            if prompt_only:
+                print(story_detection.build_prompt(store, items))
+                return 0
+            result = story_detection.detect(
+                store,
+                items,
+                digest.ClaudeCli(
+                    model=model, system_prompt=story_detection.DETECTION_SYSTEM_PROMPT
+                ),
+            )
+            slugs = story_seeds.to_follow(result, seeds)
+            followed: list[stories.Story] = []
+            if not dry_run:
+                with store.transaction():
+                    story_detection.apply(store, result, now)
+                    for slug in slugs:
+                        story = store.get_by_slug(slug)
+                        if story is None:
+                            raise stories.StoryError(f"no story {slug!r}")
+                        store.follow(story.id, now)
+                        followed.append(story)
+    except (
+        send_log.StateError,
+        stories.StoryError,
+        digest.GenerationError,
+        story_detection.DetectionError,
+    ) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(story_detection.format_plan(result, stored=not dry_run))
+    for slug in slugs if dry_run else ():
+        print(f"  would follow {slug}")
+    for story in followed:
+        print(f"  following #{story.id} {story.slug}")
+    stored = story_seeds.stored(result)
+    for seed in seeds:
+        if seed.url not in stored:
+            print(f"  no story from {seed.url}: `seed-stories` asks again next time")
+    return 0
+
+
 def _cmd_forget(
     season: int | None, round_: int | None, month: str | None, qualifying: bool, state: str
 ) -> int:
@@ -1416,6 +1507,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "detect-stories":
         return _cmd_detect_stories(
             args.days, args.state, args.model, args.prompt_only, args.dry_run, favourites
+        )
+    if args.command == "seed-stories":
+        return _cmd_seed_stories(
+            args.seeds, args.state, args.model, args.prompt_only, args.dry_run, favourites
         )
     if args.command == "launchd":
         return _cmd_launchd(

@@ -601,6 +601,19 @@ class StoryStore:
         }
         return [url for url in urls if url not in checked]
 
+    def without_updates(self, urls: Sequence[str]) -> list[str]:
+        """The URLs of `urls` that no story has an update from, in the same order."""
+        if not urls:
+            return []
+        stored = {
+            url
+            for (url,) in self._execute(
+                f"SELECT url FROM story_updates WHERE url IN ({', '.join('?' * len(urls))})",
+                tuple(urls),
+            )
+        }
+        return [url for url in urls if url not in stored]
+
     def mark_checked(self, urls: Sequence[str], now: datetime) -> None:
         checked_at = _stamp(now)
         with self._transaction():
