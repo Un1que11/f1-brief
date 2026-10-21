@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 from f1brief.alerts import is_quiet
 from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply
+from f1brief.bot_texts import days_ru
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore
 
@@ -60,17 +61,6 @@ def plan(store: StoryStore, now: datetime, quiet_after: timedelta = QUIET_AFTER)
     if is_quiet(now):
         return Plan((), tuple(due))
     return Plan(tuple(due), ())
-
-
-def days_ru(n: int) -> str:
-    """ "1 день", "3 дня", "60 дней"."""
-    if n % 10 == 1 and n % 100 != 11:
-        word = "день"
-    elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
-        word = "дня"
-    else:
-        word = "дней"
-    return f"{n} {word}"
 
 
 def text(offer: Offer, now: datetime) -> str:

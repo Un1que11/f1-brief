@@ -41,7 +41,7 @@
 - [x] F36. [light] LaunchAgent for the bot: `f1brief launchd --job bot` writes a second plist (`local.f1brief.bot`) that starts `f1brief bot` at login with `KeepAlive` (restart on crash, throttle so a bad token does not loop fast), same PATH/workdir handling and log dir as the `run` plist (`bot.log`, `bot.err.log`). `--job run` stays the default. README: install, check, uninstall, and a note that only one listener may poll. Tests: the generated plist for both jobs.
 
 ## Phase 5c — a bot that explains itself
-- [ ] F40. Clear Telegram bot UI (Russian; keep every text in one module so F30's message catalog can take them over):
+- [x] F40. Clear Telegram bot UI (Russian; keep every text in one module so F30's message catalog can take them over):
   - **/start** greets and explains in 3–4 lines what the bot does (digest ~2 days before FP1, a message after qualifying, story alerts) and when the next digest comes (date and time in Warsaw), then shows the main menu. Any text that is not a command gets the same menu instead of silence.
   - **Main menu** as inline buttons, so nothing has to be typed: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая гонка», «⭐ Избранное», «❓ Помощь». Every reply has a «← Меню» button.
   - **Stories without numbers:** /stories lists each story as a button; tapping one opens its timeline with «Следить» / «Отписаться» / «Без уведомлений на 7 дней» buttons. Typed commands with ids keep working.

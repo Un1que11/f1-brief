@@ -27,6 +27,7 @@ CHAT = "424242"
 OTHER_CHAT = "515151"
 TOKEN = "123456:TEST-token_abcDEF"
 UPDATES = FIXTURES / "telegram" / "updates.json"
+BACK = Button("← Меню", "menu:main")
 
 BEARMAN_FERRARI = [
     Entity(EntityKind.DRIVER, "bearman"),
@@ -173,9 +174,17 @@ def test_updates_from_another_chat_get_no_answer_and_change_nothing(
     assert [s.id for s in store.followed()] == [story.id]
 
 
-def test_plain_text_and_start_get_the_help(handler: Bot) -> None:
-    for text in ("привет", "/start", "/help"):
-        assert "/stories" in text_of(handler.handle(message(text), NOW))
+def test_plain_text_gets_the_main_menu(handler: Bot) -> None:
+    for text in ("привет", "/menu"):
+        [reply] = handler.handle(message(text), NOW)
+        assert reply == Reply("Я понимаю кнопки и команды. Что показать?", bot.MAIN_MENU)
+
+
+def test_help_lists_the_commands_with_a_menu_button(handler: Bot) -> None:
+    actions = handler.handle(message("/help"), NOW)
+    assert "/stories" in text_of(actions)
+    assert "/next" in text_of(actions)
+    assert buttons_of(actions) == [BACK]
 
 
 def test_an_unknown_command_is_named_with_the_help(handler: Bot) -> None:
@@ -201,15 +210,16 @@ def test_stories_lists_followed_and_recent_open_stories_with_buttons(
     text = text_of(actions)
     assert text.splitlines()[:2] == [
         "Ты следишь:",
-        f"#{followed.id} Бирман в Ferrari в 2028? — слух, 30.09.2026 "
-        "(без уведомлений до 22.10.2026)",
+        "🔕 Бирман в Ferrari в 2028? — слух, 30.09.2026 (без уведомлений до 22.10.2026)",
     ]
-    assert "Недавние сюжеты:" in text
-    assert f"#{other.id} Рассел продлит контракт?" in text
+    assert "Недавние сюжеты:\n• Рассел продлит контракт? — слух" in text
+    assert "#" not in text  # stories are opened by their buttons, not by numbers
     assert "Старый сюжет" not in text  # resolved: only in /archive
+    # One button per story; it opens the timeline.
     assert buttons_of(actions) == [
-        Button(f"Отписаться #{followed.id}", f"unfollow:{followed.id}"),
-        Button(f"Следить #{other.id}", f"follow:{other.id}"),
+        Button("🔕 Бирман в Ferrari в 2028?", f"story:{followed.id}"),
+        Button("Рассел продлит контракт?", f"story:{other.id}"),
+        BACK,
     ]
 
 
@@ -240,7 +250,7 @@ def test_story_shows_the_timeline_with_sources(store: StoryStore, handler: Bot) 
     # An undated article is dated by when it was recorded.
     assert "19.10.2026 — Synthetic headline 3 (Example News)" in text
     assert text.index("story-1") < text.index("story-2") < text.index("story-3")
-    assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}")]
+    assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}"), BACK]
 
 
 @pytest.mark.parametrize("command", ["/story", "/follow", "/unfollow", "/mute"])
@@ -268,7 +278,9 @@ def test_follow_subscribes_and_offers_the_entities_that_are_not_favourites(
     # Bearman and Haas are favourites already, and a person is never one.
     assert buttons_of(actions) == [
         Button("Отписаться", f"unfollow:{story.id}"),
+        Button("Без уведомлений на 7 дней", f"mute:{story.id}:7"),
         Button("Следить за Ferrari, Hamilton", f"favs:{story.id}"),
+        BACK,
     ]
     assert favourites.calls == []  # only offered
 
@@ -292,7 +304,7 @@ def test_the_unfollow_button_unsubscribes_in_one_tap(store: StoryStore, handler:
     assert not subscription.active
     assert subscription.unfollowed_at == NOW
     assert store.get(story.id) is not None  # kept in the archive
-    assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}")]
+    assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}"), BACK]
 
 
 def test_unfollow_command_when_not_followed(store: StoryStore, handler: Bot) -> None:
@@ -389,7 +401,11 @@ def test_the_entities_button_adds_the_new_favourites(
     assert actions[0] == Answer("cb1", "Добавлено")
     assert "Добавил в избранное: Ferrari, Hamilton." in text_of(actions)
     # Nothing left to offer.
-    assert buttons_of(actions) == [Button("Отписаться", f"unfollow:{story.id}")]
+    assert buttons_of(actions) == [
+        Button("Отписаться", f"unfollow:{story.id}"),
+        Button("Без уведомлений на 7 дней", f"mute:{story.id}:7"),
+        BACK,
+    ]
     assert handler.handle(press(f"favs:{story.id}", update_id=2), NOW) == [
         Answer("cb2", "Уже в избранном")
     ]
@@ -531,7 +547,16 @@ def test_a_long_archive_keeps_the_buttons_on_the_last_message(
     assert len(parts) > 1
     assert all(len(p.text) <= bot.MAX_LENGTH for p in parts)
     assert all(not p.buttons for p in parts[:-1])
-    assert len(parts[-1].buttons) == 80
+    assert len(parts[-1].buttons) == 81  # a button per story, then "← Меню"
+
+
+def test_stories_give_at_most_90_stories_a_button(store: StoryStore, handler: Bot) -> None:
+    for n in range(95):
+        story = seed(store, f"story-{n}", f"Сюжет {n}", [], n=n)
+        store.follow(story.id, NOW)
+    keyboard = replies(handler.handle(message("/stories"), NOW))[-1].buttons
+    assert len(keyboard) == bot.MAX_STORY_BUTTONS + 1
+    assert keyboard[-1] == (BACK,)
 
 
 # --- the Bot API and the listener ---------------------------------------------------------------
@@ -582,7 +607,9 @@ def test_replies_carry_the_inline_keyboard(store: StoryStore, handler: Bot) -> N
     assert sent["reply_markup"] == {
         "inline_keyboard": [
             [{"text": "Отписаться", "callback_data": f"unfollow:{story.id}"}],
+            [{"text": "Без уведомлений на 7 дней", "callback_data": f"mute:{story.id}:7"}],
             [{"text": "Следить за Ferrari, Hamilton", "callback_data": f"favs:{story.id}"}],
+            [{"text": "← Меню", "callback_data": "menu:main"}],
         ]
     }
     assert mock.sent("getUpdates")[0]["allowed_updates"] == ["message", "callback_query"]
@@ -828,11 +855,12 @@ def test_dry_run_answers_the_saved_updates_and_keeps_nothing(
     assert code == 0
     assert "Ты пока не следишь ни за одним сюжетом." in out  # /stories
     assert "[button answer] Следишь" in out  # follow:1
-    assert "[Отписаться]\n[Следить за Ferrari, Hamilton]" in out
+    assert "[Отписаться]\n[Без уведомлений на 7 дней]\n[Следить за Ferrari, Hamilton]" in out
     assert "Добавил в избранное: Ferrari, Hamilton." in out  # favs:1
     assert "Статус: слух · ты следишь" in out  # /story@test_bot 1
     assert "Ты больше не следишь" not in out  # /unfollow from another chat: ignored
     assert "would add Ferrari, Hamilton" in err
+    assert err.count("ignored chat 515151") == 1  # the stranger's /unfollow
     assert "6 update(s), nothing sent or stored" in err
     # Nothing kept: no subscription, config untouched.
     with StoryStore(cli_dir / "state.db") as opened:
@@ -859,7 +887,7 @@ def test_dry_run_takes_the_chat_from_the_environment(
     monkeypatch.setenv(ts.CHAT_ID_VAR, OTHER_CHAT)
     assert main(["bot", "--dry-run", "--updates", str(UPDATES), "--env-file", "missing"]) == 0
     # Only the stranger's /unfollow is from that chat; story 1 is not followed.
-    assert capsys.readouterr().out.strip() == "Ты не следишь за сюжетом #1.\n[Следить]"
+    assert capsys.readouterr().out.strip() == "Ты не следишь за сюжетом #1.\n[Следить]\n[← Меню]"
 
 
 def test_dry_run_without_a_chat_id(cli_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -900,9 +928,11 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setenv(ts.TOKEN_VAR, TOKEN)
     monkeypatch.setenv(ts.CHAT_ID_VAR, CHAT)
     seen: dict[str, Any] = {}
+    monkeypatch.setattr(bot, "register_commands", lambda telegram: seen.setdefault("menu", True))
 
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         seen["offsets"] = offsets.load()
+        seen["days_before"] = handler.days_before
         seen["chat"] = handler.chat_id
         seen["teams"] = handler.favourites.team_ids
         # The entities button writes the real config file outside a dry run.
@@ -913,7 +943,13 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setattr(bot, "listen", fake_listen)
 
     assert main(["bot"]) == 0
-    assert seen == {"offsets": None, "chat": CHAT, "teams": ("mclaren", "haas")}
+    assert seen == {
+        "menu": True,
+        "offsets": None,
+        "days_before": 2,
+        "chat": CHAT,
+        "teams": ("mclaren", "haas"),
+    }
     favourites = config.load(cli_dir / "config.toml").favourites
     assert favourites.team_ids == ("mclaren", "haas", "ferrari")
     assert "hamilton" in favourites.driver_ids
@@ -927,6 +963,8 @@ def test_a_fatal_poll_error_ends_the_command(
 
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         raise bot.BotError("getUpdates: Conflict: terminated by other getUpdates request", 409)
+
+    monkeypatch.setattr(bot, "register_commands", lambda telegram: True)
 
     monkeypatch.setattr(bot, "listen", fake_listen)
     assert main(["bot"]) == 1
