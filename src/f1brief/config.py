@@ -253,6 +253,9 @@ def add_favourites(
         if not fresh:
             continue
         kept = () if key in listed else existing
+        if key in listed and not listed[key]:
+            # A list emptied with `<key> = []` (remove_favourite) cannot also take blocks.
+            text = _without_empty_list(text, key)
         blocks += [_toml_entry(key, f) for f in (*kept, *fresh)]
     if not blocks:
         return current
@@ -288,11 +291,11 @@ def remove_favourite(path: str | Path, kind: str, fav_id: str, write: bool = Tru
     if kind in data.get("favourites", {}):
         updated_text = _without_entry(text, kind, ids.index(fav_id))
         if not remaining:
-            updated_text = _append(updated_text, [f"[favourites]\n{kind} = []"])
+            updated_text = _with_empty_list(updated_text, kind)
     elif remaining:
         updated_text = _append(text, [_toml_entry(kind, f) for f in remaining])
     else:
-        updated_text = _append(text, [f"[favourites]\n{kind} = []"])
+        updated_text = _with_empty_list(text, kind)
     _, updated = _parsed(file, updated_text)
     expected = Favourites(**{**vars(current.favourites), kind: tuple(remaining)})
     if updated.favourites != expected:
@@ -322,6 +325,34 @@ def _without_entry(text: str, kind: str, index: int) -> str:
     if start > 0 and not lines[start - 1].strip() and end < len(lines) and not lines[end].strip():
         end += 1  # one blank line between the blocks around it, not two
     return "\n".join(lines[:start] + lines[end:]).rstrip("\n") + "\n"
+
+
+_FAVOURITES_HEADER = re.compile(r"\s*\[\s*favourites\s*\]\s*(#.*)?")
+_EMPTY_LIST = re.compile(r"\s*(teams|drivers)\s*=\s*\[\s*\]\s*(#.*)?")
+
+
+def _with_empty_list(text: str, kind: str) -> str:
+    """`text` with `<kind> = []` in its `[favourites]` table, which is added when absent. A
+    second `[favourites]` header would make the file invalid TOML."""
+    lines = text.split("\n")
+    header = next((n for n, line in enumerate(lines) if _FAVOURITES_HEADER.fullmatch(line)), None)
+    if header is None:
+        return _append(text, [f"[favourites]\n{kind} = []"])
+    lines.insert(header + 1, f"{kind} = []")
+    return "\n".join(lines)
+
+
+def _without_empty_list(text: str, kind: str) -> str:
+    """`text` without the `<kind> = []` line of its `[favourites]` table, so that
+    `[[favourites.<kind>]]` blocks can be appended (TOML does not allow both)."""
+    lines = text.split("\n")
+    in_favourites = False
+    for n, line in enumerate(lines):
+        if _TABLE_HEADER.match(line):
+            in_favourites = bool(_FAVOURITES_HEADER.fullmatch(line))
+        elif in_favourites and (match := _EMPTY_LIST.fullmatch(line)) and match.group(1) == kind:
+            return "\n".join(lines[:n] + lines[n + 1 :])
+    return text
 
 
 def _read(file: Path) -> str:
