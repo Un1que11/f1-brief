@@ -87,9 +87,25 @@
   - Depends on F29, F30, F31, F32.
 - [ ] F35. Access control and limits:
   - Every bot handler and callback checks that the sender is an active user (replacing the single chat_id check).
-  - Per-user command rate limits; admin commands `/users` and `/block`; a configurable cap on the number of users.
+  - Per-user command rate limits and a configurable cap on the number of users. Admin actions live in the admin bot (F42), not in the users' bot.
   - The README explains the cost: one `claude -p` call per (language, favourites) combination for the shared digest, plus the per-user parts and per-language story texts.
   - Depends on F33.
+
+- [ ] F42. Admin bot: a **separate** Telegram bot for Misha to watch and manage users (its own token `ADMIN_BOT_TOKEN`, created in @BotFather; it answers only the admin's Telegram user id from `.env`, everyone else gets no reply and is logged). Runs as `f1brief admin-bot`, with its own LaunchAgent (`f1brief launchd --job admin`, KeepAlive like the bot) and the same `state.db`. Russian UI, buttons everywhere (F40 style, F41 formatting):
+  - **Live sign-up feed:** a message for every new account, with name, @username, language, favourites and time zone, and buttons «🚫 Заблокировать» / «👤 Карточка». Also notified: `/delete_me`, a user blocking the bot (Telegram 403), and hitting the user cap.
+  - **Approval mode:** a fourth `signup = "approval"`: a new user waits («Заявка отправлена»), the admin bot shows «✅ Принять» / «❌ Отклонить», and the user is told the result.
+  - **/users:** paginated list (10 per page) with filters active / pending / blocked and sort by joined or last active; each row opens a user card.
+  - **User card:** joined, last active, language, time zone, favourites, followed stories, digests and alerts sent, last delivery error; buttons block / unblock / delete (with a confirm step), and «Отправить сообщение» (text sent to that user only).
+  - **/stats:** users total / active in 7 days / new this week (with a 4-week trend line), digests and alerts sent this week, `claude -p` calls this week and how many (language, favourites) combinations they covered, delivery failures.
+  - **/health:** last `run` and when it finished, last digest round, the users' bot uptime and last poll, the newest lines of `run.err.log` / `bot.err.log` when they have errors, disk size of `state.db`.
+  - **/signup:** shows the current mode and switches it with buttons (open / approval / invite / closed), writing `config.toml`.
+  - **/invite:** creates a one-time code and the ready link `t.me/<bot>?start=<code>`; `/invites` lists the unused ones with «Отозвать».
+  - **/broadcast:** write a message, see a preview with the recipient count, confirm, then delivery stats; respects Telegram rate limits (≤ 25 messages per second).
+  - **Daily report** at 09:00 Warsaw, only if something happened: new users, errors, failed deliveries.
+  - Privacy: the admin bot shows account data and counts only, never what users typed to the bot.
+  - `setup.sh` asks for `ADMIN_BOT_TOKEN` (optional, Enter skips), finds the admin's user id the same way as the chat id, and installs the admin LaunchAgent; `./setup.sh status` shows it.
+  - Tests on recorded update payloads: a non-admin gets nothing, each command and button, approval flow, broadcast confirm, pagination.
+  - Depends on F32, F33, F35.
 
 ## Phase 7 — Docker (after multi-user)
 - [x] F37. Docker image: `Dockerfile` on `python:3.12-slim` with uv (dependencies in a cached layer from `uv.lock`), Node + Claude Code CLI for `claude -p`, tzdata with `TZ=Europe/Warsaw`, non-root user, `.dockerignore` (.venv, .env, state.db, caches). No secrets or state in the image. Builds for `linux/arm64` and `linux/amd64`. Claude Code in a container cannot use the Mac's Keychain login: find the supported headless auth (e.g. a long-lived token from `claude setup-token` passed as an environment variable; check the current Claude Code docs, don't guess), document it, and fail with a clear message when it is missing.
