@@ -241,3 +241,92 @@ def _with_which(make_job, which):
         return make_job(*args, which=which, **kwargs)
 
     return wrapped
+
+
+# --- F36: the always-on bot listener ---
+
+
+def test_bot_plist_keeps_the_listener_running(
+    checkout: Path, tools: dict[str, Path], tmp_path: Path
+) -> None:
+    job = launchd.make_job(checkout, tmp_path / "logs", which=_which(tools), name="bot")
+
+    data = plistlib.loads(launchd.render(job))
+
+    assert data["Label"] == "local.f1brief.bot"
+    assert data["ProgramArguments"][-2:] == ["f1brief", "bot"]
+    assert data["WorkingDirectory"] == str(checkout)
+    assert data["KeepAlive"] is True
+    assert data["RunAtLoad"] is True
+    # Restarted at most every 30 s, so a bad token cannot loop fast.
+    assert data["ThrottleInterval"] == 30
+    assert "StartInterval" not in data
+    assert data["StandardOutPath"] == str(tmp_path / "logs" / "bot.log")
+    assert data["StandardErrorPath"] == str(tmp_path / "logs" / "bot.err.log")
+
+
+def test_run_plist_has_no_keep_alive(
+    checkout: Path, tools: dict[str, Path], tmp_path: Path
+) -> None:
+    data = launchd.plist(launchd.make_job(checkout, tmp_path, which=_which(tools)))
+
+    assert "KeepAlive" not in data
+    assert "ThrottleInterval" not in data
+
+
+def test_bot_job_does_not_need_claude(
+    checkout: Path, tools: dict[str, Path], tmp_path: Path
+) -> None:
+    job = launchd.make_job(checkout, tmp_path, which=_which({"uv": tools["uv"]}), name="bot")
+
+    assert job.path_dirs[0] == str(tools["uv"].parent)
+    assert str(tools["claude"].parent) not in job.path_dirs
+
+
+def test_unknown_job_is_refused(checkout: Path, tools: dict[str, Path], tmp_path: Path) -> None:
+    with pytest.raises(launchd.LaunchdError, match="unknown job 'web'"):
+        launchd.make_job(checkout, tmp_path, which=_which(tools), name="web")
+
+
+def test_default_plist_path_per_job() -> None:
+    home = Path("/Users/someone")
+
+    assert launchd.default_plist_path(home, "bot") == Path(
+        "/Users/someone/Library/LaunchAgents/local.f1brief.bot.plist"
+    )
+
+
+def test_bot_install_commands_print_the_bot_label() -> None:
+    commands = launchd.install_commands(Path("/tmp/x.plist"), "bot")
+
+    assert commands[2] == "launchctl print gui/$(id -u)/local.f1brief.bot | head -20"
+
+
+def test_cli_writes_the_bot_plist(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    checkout: Path,
+    tools: dict[str, Path],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(launchd, "make_job", _with_which(launchd.make_job, _which(tools)))
+    out = tmp_path / "agents" / "local.f1brief.bot.plist"
+
+    code = main(
+        [
+            "launchd",
+            "--job",
+            "bot",
+            "--workdir",
+            str(checkout),
+            "--log-dir",
+            str(tmp_path / "logs"),
+            "--output",
+            str(out),
+        ]
+    )
+
+    assert code == 0
+    data = plistlib.loads(out.read_bytes())
+    assert data["Label"] == "local.f1brief.bot"
+    assert "local.f1brief.bot" in capsys.readouterr().out

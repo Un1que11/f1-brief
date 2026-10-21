@@ -414,13 +414,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     launchd_cmd = commands.add_parser(
         "launchd",
-        help="print (or write) the macOS LaunchAgent that runs `f1brief run` every hour",
+        help="print (or write) the macOS LaunchAgent that runs `f1brief run` every hour, "
+        "or (--job bot) keeps `f1brief bot` running",
+    )
+    launchd_cmd.add_argument(
+        "--job",
+        choices=launchd.JOBS,
+        default=launchd.DEFAULT_JOB,
+        help="run: the hourly digest job (default); bot: the always-on Telegram bot listener",
     )
     launchd_cmd.add_argument(
         "--output",
         metavar="PATH",
         help="write the plist here (e.g. ~/Library/LaunchAgents/"
-        f"{launchd.PLIST_NAME}) and create the log directory; default: print it",
+        f"{launchd.PLIST_NAME}, or local.f1brief.bot.plist for --job bot) and create the "
+        "log directory; default: print it",
     )
     launchd_cmd.add_argument(
         "--workdir",
@@ -1437,6 +1445,7 @@ def _cmd_launchd(
     log_dir: str | None,
     uv: str | None,
     claude: str | None,
+    job_name: str = launchd.DEFAULT_JOB,
 ) -> int:
     home = Path.home()
     try:
@@ -1446,6 +1455,7 @@ def _cmd_launchd(
             interval_minutes=interval,
             uv=uv,
             claude=claude,
+            name=job_name,
         )
     except launchd.LaunchdError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1465,7 +1475,7 @@ def _cmd_launchd(
     print(f"wrote {path}")
     print(f"logs: {job.stdout_log}, {job.stderr_log}")
     print("to load it (and run it once now), run:")
-    for command in launchd.install_commands(path):
+    for command in launchd.install_commands(path, job.name):
         print(f"  {command}")
     return 0
 
@@ -1564,7 +1574,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_archive_page(args.output, args.state)
     if args.command == "launchd":
         return _cmd_launchd(
-            args.output, args.workdir, args.interval, args.log_dir, args.uv, args.claude
+            args.output,
+            args.workdir,
+            args.interval,
+            args.log_dir,
+            args.uv,
+            args.claude,
+            args.job,
         )
     if args.command == "forget":
         return _cmd_forget(args.season, args.round, args.month, args.qualifying, args.state)
