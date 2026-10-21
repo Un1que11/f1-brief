@@ -10,11 +10,13 @@ anything besides the prompt either.
 """
 
 import json
+import os
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import resources
+from pathlib import Path
 from typing import Any, Protocol
 
 FACTS_MARKER = "{{FACTS_JSON}}"
@@ -42,6 +44,41 @@ QUALIFYING_SYSTEM_PROMPT = (
 
 class GenerationError(Exception):
     """The digest text could not be generated."""
+
+
+# Set by the Docker image (F37). Outside a container `claude` may be logged in through the
+# macOS Keychain, which cannot be seen from here, so the check below only runs inside one.
+CONTAINER_FLAG = "F1BRIEF_CONTAINER"
+# Environment credentials Claude Code reads in `-p` mode (see its authentication docs).
+CREDENTIAL_VARIABLES = (
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
+MISSING_AUTH = (
+    "claude has no credentials in this container: set CLAUDE_CODE_OAUTH_TOKEN to a token "
+    "from `claude setup-token` (run it once on the Mac) or ANTHROPIC_API_KEY in the "
+    "container's environment (README, section Docker)"
+)
+
+
+def missing_container_auth(environ: Mapping[str, str]) -> str | None:
+    """Why `claude -p` cannot authenticate in the container, or None when it can (or when
+    not in a container). A login stored in the container's config dir counts as well."""
+    if not environ.get(CONTAINER_FLAG):
+        return None
+    if any(environ.get(name, "").strip() for name in CREDENTIAL_VARIABLES):
+        return None
+    config_dir = environ.get("CLAUDE_CONFIG_DIR")
+    if not config_dir:
+        home = environ.get("HOME")
+        config_dir = str((Path(home) if home else Path.home()) / ".claude")
+    if (Path(config_dir) / ".credentials.json").is_file():
+        return None
+    return MISSING_AUTH
 
 
 def template(name: str = DIGEST_TEMPLATE, language: str | None = DEFAULT_LANGUAGE) -> str:
@@ -88,6 +125,7 @@ class ClaudeCli:
     system_prompt: str = SYSTEM_PROMPT
     timeout: float = TIMEOUT_S
     run: Runner | None = None  # subprocess.run, looked up at call time so tests can block it
+    environ: Mapping[str, str] | None = None  # os.environ when None
 
     def command(self) -> list[str]:
         cmd = [
@@ -109,6 +147,9 @@ class ClaudeCli:
         return cmd
 
     def __call__(self, prompt: str) -> str:
+        problem = missing_container_auth(os.environ if self.environ is None else self.environ)
+        if problem is not None:
+            raise GenerationError(problem)
         run = self.run or subprocess.run
         # An empty working directory: no project CLAUDE.md or settings to pick up.
         with tempfile.TemporaryDirectory(prefix="f1brief-") as cwd:

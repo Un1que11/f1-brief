@@ -436,3 +436,83 @@ def test_qualifying_claude_has_its_own_system_prompt() -> None:
     command = digest.ClaudeCli(system_prompt=digest.QUALIFYING_SYSTEM_PROMPT).command()
     assert command[command.index("--system-prompt") + 1] == digest.QUALIFYING_SYSTEM_PROMPT
     assert command[command.index("--tools") + 1] == ""
+
+
+# --- claude credentials in the Docker image (F37) ---------------------------------------
+
+
+def test_outside_a_container_the_login_is_claudes_business(tmp_path: Path) -> None:
+    # On the Mac the login lives in the Keychain, which cannot be checked from here.
+    assert digest.missing_container_auth({"HOME": str(tmp_path)}) is None
+
+
+def test_in_a_container_without_a_credential_the_reason_is_clear(tmp_path: Path) -> None:
+    environ = {"F1BRIEF_CONTAINER": "1", "CLAUDE_CONFIG_DIR": str(tmp_path)}
+
+    message = digest.missing_container_auth(environ)
+
+    assert message is not None
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in message
+    assert "claude setup-token" in message
+    assert "ANTHROPIC_API_KEY" in message
+
+
+@pytest.mark.parametrize(
+    "variable", ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK"]
+)
+def test_in_a_container_an_environment_credential_is_enough(tmp_path: Path, variable: str) -> None:
+    environ = {"F1BRIEF_CONTAINER": "1", "CLAUDE_CONFIG_DIR": str(tmp_path), variable: "x"}
+
+    assert digest.missing_container_auth(environ) is None
+
+
+def test_in_a_container_a_blank_token_is_no_credential(tmp_path: Path) -> None:
+    environ = {
+        "F1BRIEF_CONTAINER": "1",
+        "CLAUDE_CONFIG_DIR": str(tmp_path),
+        "CLAUDE_CODE_OAUTH_TOKEN": "  ",
+    }
+
+    assert digest.missing_container_auth(environ) == digest.MISSING_AUTH
+
+
+def test_in_a_container_a_stored_login_is_enough(tmp_path: Path) -> None:
+    (tmp_path / ".credentials.json").write_text("{}", encoding="utf-8")
+    environ = {"F1BRIEF_CONTAINER": "1", "CLAUDE_CONFIG_DIR": str(tmp_path)}
+
+    assert digest.missing_container_auth(environ) is None
+
+
+def test_without_claude_config_dir_the_login_is_looked_for_under_home(tmp_path: Path) -> None:
+    environ = {"F1BRIEF_CONTAINER": "1", "HOME": str(tmp_path)}
+    assert digest.missing_container_auth(environ) == digest.MISSING_AUTH
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".credentials.json").write_text("{}", encoding="utf-8")
+    assert digest.missing_container_auth(environ) is None
+
+
+def test_claude_is_not_started_without_a_credential_in_a_container(tmp_path: Path) -> None:
+    run = done(stdout="never")
+    environ = {"F1BRIEF_CONTAINER": "1", "CLAUDE_CONFIG_DIR": str(tmp_path)}
+
+    with pytest.raises(digest.GenerationError) as exc:
+        digest.ClaudeCli(run=run, environ=environ)("prompt")
+
+    assert str(exc.value) == digest.MISSING_AUTH
+    assert run.calls == []
+
+
+def test_claude_runs_with_a_token_in_a_container(tmp_path: Path) -> None:
+    run = done(stdout="Дайджест")
+    environ = {
+        "F1BRIEF_CONTAINER": "1",
+        "CLAUDE_CONFIG_DIR": str(tmp_path),
+        "CLAUDE_CODE_OAUTH_TOKEN": "token",
+    }
+
+    assert digest.ClaudeCli(run=run, environ=environ)("prompt") == "Дайджест"
+    # The token reaches claude through the inherited environment, never the command line.
+    [(cmd, kwargs)] = run.calls
+    assert "token" not in cmd
+    assert "env" not in kwargs
