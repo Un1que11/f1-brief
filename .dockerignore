@@ -1,0 +1,21 @@
+# The build context is an allowlist: only what the image needs. Secrets (.env), local state
+# (state.db), the virtualenv and caches never reach the builder.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!story_seeds.toml
+!src/
+
+# Never, even inside an allowed directory.
+**/.env
+**/.env.*
+**/.venv
+**/*.db
+**/*.sqlite*
+**/__pycache__
+**/.ruff_cache
+**/.pytest_cache
+**/cache
+**/.fastf1_cache
+**/.DS_Store

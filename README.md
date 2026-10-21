@@ -252,6 +252,43 @@ launchctl bootout gui/$(id -u)/local.f1brief.run
 rm ~/Library/LaunchAgents/local.f1brief.run.plist
 ```
 
+## Docker image
+
+`Dockerfile` builds one image for every command: `python:3.12-slim` with the locked
+dependencies (`uv sync --locked`, in their own cached layer), the Claude Code CLI (a pinned
+version, `CLAUDE_CODE_VERSION`; Node is used only in a build stage to install its native
+binary), the `Europe/Warsaw` time zone, and a non-root user `f1brief`. The entrypoint is
+`f1brief`, the working directory `/data`, where `config.toml`, `.env` and `state.db` are read
+as in the checkout. Nothing secret or stateful is in the image: `.dockerignore` lets in only
+`pyproject.toml`, `uv.lock`, `README.md`, `story_seeds.toml` (copied to
+`/app/story_seeds.toml`) and `src/`.
+
+```bash
+docker build -t f1brief .                                       # for this Mac's platform
+docker buildx build --platform linux/arm64,linux/amd64 -t f1brief .   # both platforms
+```
+
+Claude Code in a container cannot use the Mac's Keychain login. Its supported headless login
+is a long-lived (one-year) OAuth token for your Claude subscription: run `claude setup-token`
+once on the Mac, approve in the browser, and put the printed token in `.env` as
+`CLAUDE_CODE_OAUTH_TOKEN=...` (an `ANTHROPIC_API_KEY` from the Claude Console works too, billed
+per use). The token can only make model requests. Pass `.env` to the container as its
+environment, so both the token and the Telegram settings reach it:
+
+```bash
+docker run --rm --env-file .env -v "$PWD/config.toml:/data/config.toml:ro" \
+  -v f1-state:/data f1brief run --dry-run
+```
+
+`--env-file` takes `KEY=value` lines literally, so write values without quotes. Inside the
+image (`F1BRIEF_CONTAINER=1`) every command that calls `claude -p` stops before starting it,
+with a message naming `CLAUDE_CODE_OAUTH_TOKEN`, when neither a token, an API key nor a login
+stored in `$CLAUDE_CONFIG_DIR` (`/home/f1brief/.claude`) is there. Claude Code's auto-updater is
+off; to update it, change `CLAUDE_CODE_VERSION` and rebuild. The `Docker` workflow
+(`.github/workflows/docker.yml`) builds both platforms and smoke-tests the amd64 image on every
+pull request that touches the image's inputs; it pushes nothing and uses no secrets. The compose
+setup with both services is F38.
+
 ## Checks
 
 These must all pass before a PR is opened:
@@ -272,4 +309,6 @@ src/f1brief/   application package
 tests/         pytest suite (no network: recorded fixtures only)
 tests/fixtures/  recorded API responses (e.g. jolpica/schedule_2026.json)
 .github/workflows/ci.yml  CI: ruff + pytest
+.github/workflows/docker.yml  CI: build and smoke-test the Docker image
+Dockerfile, .dockerignore  the container image (F37)
 ```
