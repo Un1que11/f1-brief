@@ -31,6 +31,7 @@ class Stubs:
         self.error: Exception | None = None
         self.collected: list[tuple[Any, ...]] = []
         self.generated: list[dict[str, Any]] = []
+        self.languages: list[str] = []
         self.text = MESSAGE
 
     def fetch_classification(self, race: schedule.Race, *args: Any) -> list:
@@ -44,8 +45,9 @@ class Stubs:
         )
         return {"kind": "after_qualifying", "sections": {}, "missing": []}
 
-    def generate(self, document: dict[str, Any], model: digest.ClaudeCli) -> str:
+    def generate(self, document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         assert model.system_prompt == digest.QUALIFYING_SYSTEM_PROMPT
+        self.languages.append(language)
         self.generated.append(document)
         return self.text
 
@@ -173,7 +175,7 @@ def test_missing_settings_fail_before_anything_is_fetched(
 def test_a_generation_failure_records_nothing(setup, monkeypatch: pytest.MonkeyPatch) -> None:
     _, recorder = setup
 
-    def fail(document: dict[str, Any], model: Any) -> str:
+    def fail(document: dict[str, Any], model: Any, language: str) -> str:
         raise digest.GenerationError("claude timed out after 600s")
 
     monkeypatch.setattr(digest, "generate_after_qualifying", fail)
@@ -264,6 +266,17 @@ def test_quali_passes_the_favourites_and_writes_the_text(setup, tmp_path: Path) 
     assert stubs.collected == [(18, 22, ("bearman", "ocon"), ("haas",))]
     assert recorder.requests == []
     assert record() is None
+    assert stubs.languages == ["ru"]
+
+
+def test_the_message_is_written_in_the_configured_language(setup, tmp_path: Path) -> None:
+    stubs, recorder = setup
+    (tmp_path / "config.toml").write_text('[digest]\nlanguage = "en"\n', encoding="utf-8")
+
+    assert main(["run"]) == 0
+    assert main(["quali", "--output", str(tmp_path / "quali.txt")]) == 0
+    assert stubs.languages == ["en", "en"]
+    assert len(recorder.requests) == 1
 
 
 def test_quali_for_an_unknown_round_is_an_error(setup, capsys) -> None:

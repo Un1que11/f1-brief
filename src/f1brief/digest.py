@@ -1,10 +1,12 @@
 """The digest text, written by headless Claude Code (`claude -p`) from the facts document alone.
 
-The prompt is a fixed template (`digest_prompt.md`; `summary_prompt.md` for the off-season
-monthly summary; `qualifying_prompt.md` for the message after qualifying) with the facts JSON
-(F12, F18, F19) inserted, and nothing else: no names, results
-or dates live in the template. Claude runs without tools, MCP servers or user settings, from an
-empty directory, so it cannot read or fetch anything besides the prompt either.
+The prompt is a fixed template (`prompts/<language>/digest.md`; `summary.md` for the
+off-season monthly summary; `qualifying.md` for the message after qualifying) with the facts
+JSON (F12, F18, F19) inserted, and nothing else: no names, results or dates live in the
+template. Each language (F29) has its own copy of every template; the copies differ only in
+the output language, and a test keeps their rules and sections the same. Claude runs without
+tools, MCP servers or user settings, from an empty directory, so it cannot read or fetch
+anything besides the prompt either.
 """
 
 import json
@@ -18,9 +20,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 FACTS_MARKER = "{{FACTS_JSON}}"
-DIGEST_TEMPLATE = "digest_prompt.md"
-SUMMARY_TEMPLATE = "summary_prompt.md"
-QUALIFYING_TEMPLATE = "qualifying_prompt.md"
+DIGEST_TEMPLATE = "digest"
+SUMMARY_TEMPLATE = "summary"
+QUALIFYING_TEMPLATE = "qualifying"
+TEMPLATES = (DIGEST_TEMPLATE, SUMMARY_TEMPLATE, QUALIFYING_TEMPLATE)
+DEFAULT_LANGUAGE = "ru"
 TIMEOUT_S = 600.0
 
 # Replaces Claude Code's default (coding agent) system prompt. Fact-free, like the template.
@@ -77,8 +81,15 @@ def missing_container_auth(environ: Mapping[str, str]) -> str | None:
     return MISSING_AUTH
 
 
-def template(name: str = DIGEST_TEMPLATE) -> str:
-    return resources.files("f1brief").joinpath(name).read_text(encoding="utf-8")
+def template(name: str = DIGEST_TEMPLATE, language: str | None = DEFAULT_LANGUAGE) -> str:
+    """`prompts/<language>/<name>.md`; with no language, the shared `prompts/<name>.md` (the
+    story detection prompt, whose answers are not reader-facing text)."""
+    prompts = resources.files("f1brief").joinpath("prompts")
+    path = (prompts if language is None else prompts.joinpath(language)).joinpath(f"{name}.md")
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ValueError(f"no {name!r} prompt template for language {language!r}") from None
 
 
 def facts_json(document: dict[str, Any]) -> str:
@@ -87,8 +98,10 @@ def facts_json(document: dict[str, Any]) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2).replace("</", "<\\/")
 
 
-def build_prompt(document: dict[str, Any], name: str = DIGEST_TEMPLATE) -> str:
-    text = template(name)
+def build_prompt(
+    document: dict[str, Any], name: str = DIGEST_TEMPLATE, language: str | None = DEFAULT_LANGUAGE
+) -> str:
+    text = template(name, language)
     if text.count(FACTS_MARKER) != 1:
         raise ValueError(f"the prompt template must contain {FACTS_MARKER} exactly once")
     return text.replace(FACTS_MARKER, facts_json(document))
@@ -164,18 +177,24 @@ class ClaudeCli:
         return text
 
 
-def generate(document: dict[str, Any], model: TextModel | None = None) -> str:
-    """The digest text for a facts document from `f1brief.facts.collect`."""
-    return (model or ClaudeCli())(build_prompt(document))
+def generate(
+    document: dict[str, Any], model: TextModel | None = None, language: str = DEFAULT_LANGUAGE
+) -> str:
+    """The digest text, in `language`, for a facts document from `f1brief.facts.collect`."""
+    return (model or ClaudeCli())(build_prompt(document, DIGEST_TEMPLATE, language))
 
 
-def generate_summary(document: dict[str, Any], model: TextModel | None = None) -> str:
-    """The monthly summary text for a document from `f1brief.offseason.collect`."""
+def generate_summary(
+    document: dict[str, Any], model: TextModel | None = None, language: str = DEFAULT_LANGUAGE
+) -> str:
+    """The monthly summary text, in `language`, for a document from `f1brief.offseason.collect`."""
     model = model or ClaudeCli(system_prompt=SUMMARY_SYSTEM_PROMPT)
-    return model(build_prompt(document, SUMMARY_TEMPLATE))
+    return model(build_prompt(document, SUMMARY_TEMPLATE, language))
 
 
-def generate_after_qualifying(document: dict[str, Any], model: TextModel | None = None) -> str:
-    """The message text for a document from `f1brief.after_qualifying.collect`."""
+def generate_after_qualifying(
+    document: dict[str, Any], model: TextModel | None = None, language: str = DEFAULT_LANGUAGE
+) -> str:
+    """The message text, in `language`, for a document from `f1brief.after_qualifying.collect`."""
     model = model or ClaudeCli(system_prompt=QUALIFYING_SYSTEM_PROMPT)
-    return model(build_prompt(document, QUALIFYING_TEMPLATE))
+    return model(build_prompt(document, QUALIFYING_TEMPLATE, language))

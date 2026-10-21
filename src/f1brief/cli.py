@@ -633,6 +633,7 @@ def _cmd_digest(
     prompt_only: bool,
     state: str,
     favourites: config.Favourites,
+    language: str,
 ) -> int:
     if facts_path:
         try:
@@ -649,11 +650,11 @@ def _cmd_digest(
         if document is None:
             return 1
     if prompt_only:
-        _write(digest.build_prompt(document), output)
+        _write(digest.build_prompt(document, digest.DIGEST_TEMPLATE, language), output)
         return 0
     _warn_missing(document)
     try:
-        text = digest.generate(document, digest.ClaudeCli(model=model))
+        text = digest.generate(document, digest.ClaudeCli(model=model), language)
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -788,7 +789,11 @@ def _cmd_due(days_before: int, state: str) -> int:
 
 
 def _digest_for(
-    race: schedule.Race, model: str | None, state: str, favourites: config.Favourites
+    race: schedule.Race,
+    model: str | None,
+    state: str,
+    favourites: config.Favourites,
+    language: str,
 ) -> list[str] | None:
     """The digest messages for `race`, or None (after printing why) when they cannot be made."""
     document = _collect_facts(favourites, state)
@@ -802,7 +807,7 @@ def _digest_for(
         return None
     _warn_missing(document)
     try:
-        text = digest.generate(document, digest.ClaudeCli(model=model))
+        text = digest.generate(document, digest.ClaudeCli(model=model), language)
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
@@ -914,6 +919,7 @@ def _summary_for(
     failed: tuple[str, ...],
     model: str | None,
     favourites: config.Favourites,
+    language: str,
 ) -> list[str] | None:
     """The monthly summary messages, or None (after printing why) when they cannot be made."""
     assert decision.since is not None
@@ -923,7 +929,9 @@ def _summary_for(
     _warn_missing(document)
     try:
         text = digest.generate_summary(
-            document, digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT)
+            document,
+            digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT),
+            language,
         )
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -955,11 +963,12 @@ def _qualifying_document(
     return document
 
 
-def _qualifying_text(document: dict, model: str | None) -> str | None:
+def _qualifying_text(document: dict, model: str | None, language: str) -> str | None:
     try:
         return digest.generate_after_qualifying(
             document,
             digest.ClaudeCli(model=model, system_prompt=digest.QUALIFYING_SYSTEM_PROMPT),
+            language,
         )
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -990,11 +999,12 @@ def _cmd_run(
     model: str | None,
     env_file: str,
     favourites: config.Favourites,
+    language: str,
 ) -> int:
     if days_before < 0:
         print("error: --days-before must not be negative", file=sys.stderr)
         return 2
-    code = _run_due(days_before, state, dry_run, model, env_file, favourites)
+    code = _run_due(days_before, state, dry_run, model, env_file, favourites, language)
     # Every run, whatever was due: alerts that waited for the morning go out with the first
     # run after the quiet hours.
     return max(code, _cmd_alerts(state, dry_run, env_file))
@@ -1045,6 +1055,7 @@ def _run_due(
     model: str | None,
     env_file: str,
     favourites: config.Favourites,
+    language: str,
 ) -> int:
     """The digest, the message after qualifying or the monthly summary, whichever is due."""
     try:
@@ -1057,7 +1068,7 @@ def _run_due(
             if decision.due and decision.race is not None:
                 # Before the digest is written, so missing settings cost no claude run.
                 credentials = _credentials(dry_run, env_file)
-                chunks = _digest_for(decision.race, model, state, favourites)
+                chunks = _digest_for(decision.race, model, state, favourites, language)
                 return _send_or_print(chunks, credentials, _round_target(log, decision.race))
             quali = after_qualifying.decide(races, _now(), log)
             if quali.under_way:
@@ -1070,7 +1081,7 @@ def _run_due(
                 if not results:
                     return 0 if results is not None else 1
                 document = _qualifying_document(quali.race, results, favourites)
-                text = _qualifying_text(document, model)
+                text = _qualifying_text(document, model, language)
                 chunks = None if text is None else _messages(text)
                 return _send_or_print(chunks, credentials, _qualifying_target(log, quali.race))
             summary = _decide_summary(races, log)
@@ -1087,7 +1098,7 @@ def _run_due(
                 return 0
             credentials = _credentials(dry_run, env_file)
             items, failed = _archive_news(state, summary.since, dry_run, favourites)
-            chunks = _summary_for(summary, items, failed, model, favourites)
+            chunks = _summary_for(summary, items, failed, model, favourites, language)
             return _send_or_print(chunks, credentials, _summary_target(log, summary.month))
     except telegram_send.SendError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1103,6 +1114,7 @@ def _cmd_summary(
     prompt_only: bool,
     state: str,
     favourites: config.Favourites,
+    language: str,
 ) -> int:
     now = _now()
     today = now.astimezone(schedule.WARSAW).date()
@@ -1124,12 +1136,14 @@ def _cmd_summary(
         return 1
     document = offseason.collect(now, since, race, items, favourites, failed)
     if prompt_only:
-        _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE), output)
+        _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE, language), output)
         return 0
     _warn_missing(document)
     try:
         text = digest.generate_summary(
-            document, digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT)
+            document,
+            digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT),
+            language,
         )
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1147,6 +1161,7 @@ def _cmd_quali(
     model: str | None,
     prompt_only: bool,
     favourites: config.Favourites,
+    language: str,
 ) -> int:
     try:
         races = schedule.fetch_schedule(season)
@@ -1165,9 +1180,9 @@ def _cmd_quali(
         return 1
     document = _qualifying_document(race, results, favourites.only(team_ids, driver_ids))
     if prompt_only:
-        _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE), output)
+        _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE, language), output)
         return 0
-    text = _qualifying_text(document, model)
+    text = _qualifying_text(document, model, language)
     if text is None:
         return 1
     _write(text + "\n", output)
@@ -1493,7 +1508,8 @@ def _cmd_config(settings: config.Config) -> int:
         print(f"favourite {label}:")
         for fav in entries:
             extra = " (and their future in F1)" if fav.track_future else ""
-            print(f"  {fav.id}: {fav.name}, news words: {', '.join(fav.aliases)}{extra}")
+            forms = "".join(f", {lang}: {form}" for lang, form in fav.names)
+            print(f"  {fav.id}: {fav.name}{forms}, news words: {', '.join(fav.aliases)}{extra}")
         if not entries:
             print("  none")
     return 0
@@ -1531,10 +1547,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_facts(args.output, args.state, favourites)
     if args.command == "digest":
         return _cmd_digest(
-            args.facts, args.output, args.model, args.prompt_only, args.state, favourites
+            args.facts,
+            args.output,
+            args.model,
+            args.prompt_only,
+            args.state,
+            favourites,
+            settings.language,
         )
     if args.command == "summary":
-        return _cmd_summary(args.output, args.model, args.prompt_only, args.state, favourites)
+        return _cmd_summary(
+            args.output, args.model, args.prompt_only, args.state, favourites, settings.language
+        )
     if args.command == "quali":
         return _cmd_quali(
             args.season,
@@ -1545,6 +1569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.model,
             args.prompt_only,
             favourites,
+            settings.language,
         )
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
@@ -1554,7 +1579,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_due(args.days_before, args.state)
     if args.command == "run":
         return _cmd_run(
-            args.days_before, args.state, args.dry_run, args.model, args.env_file, favourites
+            args.days_before,
+            args.state,
+            args.dry_run,
+            args.model,
+            args.env_file,
+            favourites,
+            settings.language,
         )
     if args.command == "alerts":
         return _cmd_alerts(args.state, args.dry_run, args.env_file)

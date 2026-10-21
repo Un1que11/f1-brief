@@ -1,13 +1,14 @@
 # F1 Brief — a digest before each race weekend
 
 ## Goal
-About 2 days before the first practice session, send Misha a short digest in Russian via Telegram: what has changed since the last race, overall and for his favourites, and what to expect this weekend. Runs locally on a MacBook.
+About 2 days before the first practice session, send Misha a short digest via Telegram, in the language set by `[digest] language` in `config.toml` (`ru`, `en` or `pl`; default `ru`): what has changed since the last race, overall and for his favourites, and what to expect this weekend. Runs locally on a MacBook.
 
 ## Favourites (in `config.toml`)
 - Teams: McLaren, Haas
 - Drivers: George Russell, Esteban Ocon, Oliver Bearman
 - For Ocon, also track news about his future in F1 (contract, moves).
 - Favourites are a list in config, never hardcoded: any number of teams and drivers. Every collector (form, teammate comparison, track history, pace, news) iterates over them.
+- A favourite may set its name form per language (`names = { ru = "..." }`); texts in that language always use it.
 
 ## Hot stories (subscribable storylines)
 A **story** is a developing storyline that spans weeks or months, e.g. "Bearman may replace Hamilton at Ferrari in 2028, so his 2027 teammate battle matters". Stories are kept in an archive and Misha can follow or unfollow each one.
@@ -32,7 +33,7 @@ A **story** is a developing storyline that spans weeks or months, e.g. "Bearman 
 2. What has changed since the last race: standings, penalties, regulations, upgrades
 3. Favourite teams (McLaren, Haas): form over the last 3–5 races, pace, qualifying, upgrades
 4. Favourite drivers (Russell, Ocon, Bearman): results, comparison with their teammate, news
-5. "Твои сюжеты": updates on followed stories since the last digest and why they matter this weekend
+5. "Твои сюжеты" ("Your stories" in `en`, "Twoje wątki" in `pl`): updates on followed stories since the last digest and why they matter this weekend
 6. The track: its character, the favourites' past results there
 7. Weather
 8. "What to expect": 3–5 points, each explaining what the prediction is based on
@@ -43,6 +44,7 @@ A **story** is a developing storyline that spans weeks or months, e.g. "Bearman 
 3. `ruff check`, `ruff format --check` and `pytest` must pass before the PR is opened.
 4. No network requests in tests: recorded fixtures only.
 5. No made-up facts: everything in the digest must trace back to collected data. The generation prompt requires this explicitly, and every point has a source.
+   Every language has its own prompt templates (`src/f1brief/prompts/<language>/`) with the same rules and sections; a change to one is made in all of them.
 6. Never commit tokens or `.env`.
 7. If information is missing, mark the task `BLOCKED: <question>` and move on to the next one.
 8. Tick the task `[x]` in BACKLOG in the same PR.
@@ -58,3 +60,4 @@ A **story** is a developing storyline that spans weeks or months, e.g. "Bearman 
 
 ## Language
 Commits, branches, PR descriptions, code comments and reviews: English only.
+Digest texts (digest, off-season summary, message after qualifying) are in the configured `[digest] language`; the bot UI and alerts stay Russian until F30.

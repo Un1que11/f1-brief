@@ -52,13 +52,15 @@ class Stubs:
         self.news: list[NewsItem] = []
         self.fetches = 0
         self.documents: list[dict[str, Any]] = []
+        self.languages: list[str] = []
 
     def fetch_news(self, since: datetime, *args: Any, **kwargs: Any) -> NewsReport:
         self.fetches += 1
         return NewsReport(since, tuple(i for i in self.news if i.published >= since), ())
 
-    def generate(self, document: dict[str, Any], model: Any) -> str:
+    def generate(self, document: dict[str, Any], model: Any, language: str) -> str:
         self.documents.append(document)
+        self.languages.append(language)
         return SUMMARY
 
 
@@ -258,3 +260,15 @@ def test_summary_writes_the_text(setup, tmp_path: Path) -> None:
     assert (tmp_path / "summary.txt").read_text(encoding="utf-8") == SUMMARY + "\n"
     assert len(stubs.documents) == 1
     assert recorder.requests == []
+    assert stubs.languages == ["ru"]
+
+
+def test_the_summary_is_written_in_the_configured_language(setup, tmp_path: Path) -> None:
+    stubs, recorder = setup
+    stubs.news = [LATE]
+    (tmp_path / "config.toml").write_text('[digest]\nlanguage = "en"\n', encoding="utf-8")
+
+    assert main(["run"]) == 0
+    assert main(["summary", "--output", "summary.txt"]) == 0
+    assert stubs.languages == ["en", "en"]
+    assert len(recorder.requests) == 1
