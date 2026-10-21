@@ -40,18 +40,6 @@
 
 - [x] F36. [light] LaunchAgent for the bot: `f1brief launchd --job bot` writes a second plist (`local.f1brief.bot`) that starts `f1brief bot` at login with `KeepAlive` (restart on crash, throttle so a bad token does not loop fast), same PATH/workdir handling and log dir as the `run` plist (`bot.log`, `bot.err.log`). `--job run` stays the default. README: install, check, uninstall, and a note that only one listener may poll. Tests: the generated plist for both jobs.
 
-## Phase 5b — Docker
-- [x] F37. Docker image: `Dockerfile` on `python:3.12-slim` with uv (dependencies in a cached layer from `uv.lock`), Node + Claude Code CLI for `claude -p`, tzdata with `TZ=Europe/Warsaw`, non-root user, `.dockerignore` (.venv, .env, state.db, caches). No secrets or state in the image. Builds for `linux/arm64` and `linux/amd64`. Claude Code in a container cannot use the Mac's Keychain login: find the supported headless auth (e.g. a long-lived token from `claude setup-token` passed as an environment variable; check the current Claude Code docs, don't guess), document it, and fail with a clear message when it is missing.
-- [ ] F38. `compose.yaml`:
-  - `bot`: `f1brief bot`, `restart: unless-stopped` (one listener only: never scale it).
-  - `runner`: `f1brief run` every hour via supercronic in the same image.
-  - Data: named volumes `f1-state` (state.db, shared by both services) and `f1-cache` (FastF1 cache); `config.toml` bind-mounted (the bot's "Follow <names>" button writes to it, so not read-only) and `.env` via `env_file`.
-  - Memory and CPU: `mem_limit` / `mem_reservation`, `cpus` and `pids_limit` per service (start with bot 128m, runner 1g because FastF1/pandas loads sessions; measure with `docker stats` and record the numbers in the PR).
-  - Networks: one `egress` network for outbound calls only (Telegram, Jolpica, FastF1, RSS, Open-Meteo, Anthropic); no ports published.
-  - Hardening: `read_only: true` with `tmpfs` /tmp and writable volumes only where needed, `cap_drop: [ALL]`, `no-new-privileges`, json-file log rotation.
-  Depends on F37.
-- [ ] F39. Easy start: `./setup.sh --docker` (checks Docker is running, does the same `.env` / Telegram / chat id steps, `docker compose up -d --build`, sends the test message, seeds the stories inside the container) and `./setup.sh --docker status|logs|down`. Switching to Docker unloads the launchd agents and switching back stops the containers, so two bot listeners never poll at once. README section "Docker". Depends on F38.
-
 ## Phase 5c — a bot that explains itself
 - [ ] F40. Clear Telegram bot UI (Russian; keep every text in one module so F30's message catalog can take them over):
   - **/start** greets and explains in 3–4 lines what the bot does (digest ~2 days before FP1, a message after qualifying, story alerts) and when the next digest comes (date and time in Warsaw), then shows the main menu. Any text that is not a command gets the same menu instead of silence.
@@ -63,6 +51,16 @@
   - **Debuggable silence:** an update from a chat other than `TELEGRAM_CHAT_ID` is logged to stderr once per chat ("ignored chat <id>; TELEGRAM_CHAT_ID is <id>") instead of being dropped without a trace; `f1brief bot --check` prints the bot's username, whether a webhook is set (which blocks polling) and the configured chat id, then exits.
   - Tests on recorded update payloads for /start, plain text, each menu button and the ignored-chat log.
 
+- [ ] F41. Rich Telegram formatting for every message the bot sends (digest, post-qualifying message, off-season summary, story alerts, story timelines, bot replies), so it reads like a designed card, not a wall of text:
+  - Switch from escaped MarkdownV2 to `parse_mode=HTML` (only `<`, `>`, `&` need escaping), and turn link previews off.
+  - The generators return **structured JSON** instead of plain text (sections → items, each item with its text and the source it came from); the renderer builds the HTML. The facts-only and sources rules stay; a test that every item's source is in the facts JSON.
+  - Layout: a header line `🏁 <b>Гран-при …</b>` with the dates; each section a bold heading with one emoji (📊 Зачёт, 🧡 McLaren, 🤍 Haas, 👤 Гонщики, 📰 Твои сюжеты, 🛣 Трасса, 🌦 Погода, 🔮 Чего ждать); items as `•` bullets of 1–2 lines with the key number in bold (`<b>P4</b>`, `<b>+12 очков</b>`); the session schedule as an aligned `<pre>` block in local time; teammate head-to-heads as one compact line (`Ocon 6–3 Bearman в квалификациях`); sources as short linked labels at the end of an item (`<a href="…">F1.com</a>`), never raw URLs.
+  - Long sections (news, story timelines) go into `<blockquote expandable>` so the message stays short until opened.
+  - Story alerts: `🔔 <b>title</b>`, status chip (`🟡 слух` / `🟠 развивается` / `🟢 подтверждено` / `🔴 опровергнуто`), what changed in one line, source label, buttons below.
+  - Splitting at 4096 characters never cuts inside a tag or an entity; a heading stays with its first item.
+  - `f1brief preview --kind digest|quali|alert|summary` renders a sample from recorded fixtures and (with `--send`) sends it to the admin only, to check the look in Telegram.
+  - Tests: rendering snapshots for each kind, HTML escaping of names and headlines, splits.
+
 ## Phase 6 — languages and accounts (approved 2026-10-20: tasks in order)
 - [x] F29. Digest language: `ru`, `en`, `pl` for the existing global `[digest] language` (default `ru`). Prompt templates per language for the digest, the off-season summary and the post-qualifying message, all with the same facts-only and sources rules; a test that every language's template has the same sections and rules. Per-language name forms for drivers and teams (this covers the `name_ru` idea). Update CLAUDE.md where it says "in Russian".
 - [ ] F30. Bot UI and alert texts from a message catalog (ru / en / pl), using the global language until F34; dates, times and numbers formatted per locale (24-hour times, decimal comma for ru / pl); a test that every key exists in all three languages. Update "Bot commands (Russian UI)" in CLAUDE.md.
@@ -73,13 +71,13 @@
   - The "Следить за …" button writes to the pressing user's favourites instead of `config.toml`.
   - The per-user time zone replaces the hardcoded Europe/Warsaw in the session schedule, the send window and the quiet hours, with a test for a non-Warsaw user (e.g. America/New_York) across a DST change.
   - Update CLAUDE.md (goal, favourites, hot stories) to describe per-user behaviour.
-- [ ] F33. Sign-up and sign-in through the bot (the Telegram account is the identity, no passwords):
-  - `/start <invite code>` creates an account from a one-time code made by the admin with `/invite`. Codes expire after 7 days and are stored hashed. Without a valid code the bot answers politely and stores nothing.
-  - `/start` is accepted only in private chats, so a group can never become a user.
+- [ ] F33. Sign-up through the bot link (the Telegram account is the identity, no passwords):
+  - Anyone who opens the bot's link (`t.me/<bot>`) and presses Start in a **private chat** gets an account: a short onboarding asks for language, favourite teams and drivers (buttons from the current season's grid, multi-select) and time zone (default Europe/Warsaw), then shows the main menu (F40). Groups and channels never become users.
+  - Sign-up mode in `config.toml`: `signup = "open"` (default: anyone with the link), `"invite"` (only `/start <code>` with a one-time code from the admin's `/invite`, codes expire after 7 days and are stored hashed) or `"closed"`. Outside open mode a stranger gets a polite «Это закрытый бот» and nothing is stored.
   - The admin is Misha's Telegram user id from `.env`.
-  - Users manage their own `/language`, `/favourites` and `/settings`.
+  - Users manage their own `/language`, `/favourites` and `/settings` (days before FP1, alert cap, quiet hours) with buttons.
   - `/delete_me` deletes the account and all its rows (subscriptions, alert queue, send logs), with a test that nothing is left behind.
-  - Depends on F30, F32.
+  - Depends on F30, F32, F40.
 - [ ] F34. Per-user feeds:
   - The send window, digest, off-season summary, post-qualifying message, story subscriptions, alerts, the "Твои сюжеты" section and the 60-day "unfollow?" offer all run per user, with that user's favourites, language and time zone.
   - Facts are collected once per round and reused.
@@ -92,6 +90,18 @@
   - Per-user command rate limits; admin commands `/users` and `/block`; a configurable cap on the number of users.
   - The README explains the cost: one `claude -p` call per (language, favourites) combination for the shared digest, plus the per-user parts and per-language story texts.
   - Depends on F33.
+
+## Phase 7 — Docker (after multi-user)
+- [x] F37. Docker image: `Dockerfile` on `python:3.12-slim` with uv (dependencies in a cached layer from `uv.lock`), Node + Claude Code CLI for `claude -p`, tzdata with `TZ=Europe/Warsaw`, non-root user, `.dockerignore` (.venv, .env, state.db, caches). No secrets or state in the image. Builds for `linux/arm64` and `linux/amd64`. Claude Code in a container cannot use the Mac's Keychain login: find the supported headless auth (e.g. a long-lived token from `claude setup-token` passed as an environment variable; check the current Claude Code docs, don't guess), document it, and fail with a clear message when it is missing.
+- [ ] F38. `compose.yaml`:
+  - `bot`: `f1brief bot`, `restart: unless-stopped` (one listener only: never scale it).
+  - `runner`: `f1brief run` every hour via supercronic in the same image.
+  - Data: named volumes `f1-state` (state.db, shared by both services) and `f1-cache` (FastF1 cache); `config.toml` bind-mounted (the bot's "Follow <names>" button writes to it, so not read-only) and `.env` via `env_file`.
+  - Memory and CPU: `mem_limit` / `mem_reservation`, `cpus` and `pids_limit` per service (start with bot 128m, runner 1g because FastF1/pandas loads sessions; measure with `docker stats` and record the numbers in the PR).
+  - Networks: one `egress` network for outbound calls only (Telegram, Jolpica, FastF1, RSS, Open-Meteo, Anthropic); no ports published.
+  - Hardening: `read_only: true` with `tmpfs` /tmp and writable volumes only where needed, `cap_drop: [ALL]`, `no-new-privileges`, json-file log rotation.
+  Depends on F37.
+- [ ] F39. Easy start: `./setup.sh --docker` (checks Docker is running, does the same `.env` / Telegram / chat id steps, `docker compose up -d --build`, sends the test message, seeds the stories inside the container) and `./setup.sh --docker status|logs|down`. Switching to Docker unloads the launchd agents and switching back stops the containers, so two bot listeners never poll at once. README section "Docker". Depends on F38.
 
 ## Ideas (proposed by night job)
 - Circuit facts as a cited section of the facts JSON (length, laps, corners, DRS zones, from a checked-in file with its source). Reason: digest section 5 asks for the track's character, but the JSON has nothing on it, so the generator can only say it is unknown.
