@@ -52,6 +52,17 @@
   Depends on F37.
 - [ ] F39. Easy start: `./setup.sh --docker` (checks Docker is running, does the same `.env` / Telegram / chat id steps, `docker compose up -d --build`, sends the test message, seeds the stories inside the container) and `./setup.sh --docker status|logs|down`. Switching to Docker unloads the launchd agents and switching back stops the containers, so two bot listeners never poll at once. README section "Docker". Depends on F38.
 
+## Phase 5c — a bot that explains itself
+- [ ] F40. Clear Telegram bot UI (Russian; keep every text in one module so F30's message catalog can take them over):
+  - **/start** greets and explains in 3–4 lines what the bot does (digest ~2 days before FP1, a message after qualifying, story alerts) and when the next digest comes (date and time in Warsaw), then shows the main menu. Any text that is not a command gets the same menu instead of silence.
+  - **Main menu** as inline buttons, so nothing has to be typed: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая гонка», «⭐ Избранное», «❓ Помощь». Every reply has a «← Меню» button.
+  - **Stories without numbers:** /stories lists each story as a button; tapping one opens its timeline with «Следить» / «Отписаться» / «Без уведомлений на 7 дней» buttons. Typed commands with ids keep working.
+  - **🏁 Следующая гонка:** round, circuit and session times in Warsaw (the `next` data), and when the digest for it will be sent.
+  - **⭐ Избранное:** the favourite teams and drivers from config.toml, each with a remove button; adding stays through the story buttons.
+  - **Command menu:** register the commands with `setMyCommands` (with Russian descriptions) on listener start, so they appear under the «/» button in Telegram.
+  - **Debuggable silence:** an update from a chat other than `TELEGRAM_CHAT_ID` is logged to stderr once per chat ("ignored chat <id>; TELEGRAM_CHAT_ID is <id>") instead of being dropped without a trace; `f1brief bot --check` prints the bot's username, whether a webhook is set (which blocks polling) and the configured chat id, then exits.
+  - Tests on recorded update payloads for /start, plain text, each menu button and the ignored-chat log.
+
 ## Phase 6 — languages and accounts (approved 2026-10-20: tasks in order)
 - [x] F29. Digest language: `ru`, `en`, `pl` for the existing global `[digest] language` (default `ru`). Prompt templates per language for the digest, the off-season summary and the post-qualifying message, all with the same facts-only and sources rules; a test that every language's template has the same sections and rules. Per-language name forms for drivers and teams (this covers the `name_ru` idea). Update CLAUDE.md where it says "in Russian".
 - [ ] F30. Bot UI and alert texts from a message catalog (ru / en / pl), using the global language until F34; dates, times and numbers formatted per locale (24-hour times, decimal comma for ru / pl); a test that every key exists in all three languages. Update "Bot commands (Russian UI)" in CLAUDE.md.
