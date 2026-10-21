@@ -5,6 +5,7 @@ import contextlib
 import json
 import re
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -377,6 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--chat-id",
         metavar="ID",
         help=f"with --dry-run: the chat to accept (default: {telegram_send.CHAT_ID_VAR})",
+    )
+    bot_cmd.add_argument(
+        "--check",
+        action="store_true",
+        help="print the bot's username, whether a webhook is set (it blocks polling) and the "
+        "configured chat id, then exit",
     )
 
     archive_cmd = commands.add_parser(
@@ -1195,7 +1202,7 @@ class _DryRun(Exception):
 
 def _print_action(action: bot.Action) -> None:
     if isinstance(action, bot.Answer):
-        print(f"[button answer] {action.text}\n")
+        print(f"[button answer] {action.text}\n" if action.text else "[button answer]\n")
         return
     if isinstance(action, bot.Document):
         print(f"[file {action.filename}, {len(action.content)} bytes] {action.caption}\n")
@@ -1206,6 +1213,46 @@ def _print_action(action: bot.Action) -> None:
     print()
 
 
+# The bot reads the calendar (for /start and the next race) at most this often.
+CALENDAR_TTL_S = 3600.0
+
+
+def _cached_calendar(
+    ttl: float = CALENDAR_TTL_S, clock: Callable[[], float] = time.monotonic
+) -> Callable[[], list[schedule.Race]]:
+    """The current season's calendar, fetched again once it is `ttl` seconds old."""
+    cache: list[tuple[float, list[schedule.Race]]] = []
+
+    def read() -> list[schedule.Race]:
+        if cache and clock() - cache[0][0] < ttl:
+            return cache[0][1]
+        races = schedule.fetch_schedule()
+        cache[:] = [(clock(), races)]
+        return races
+
+    return read
+
+
+def _digest_sent(log: send_log.SendLog) -> bot.DigestSent:
+    def sent(race: schedule.Race) -> datetime | None:
+        record = log.get(race.season, race.round)
+        return record.started_at if record is not None else None
+
+    return sent
+
+
+def _cmd_bot_check(env_file: str) -> int:
+    try:
+        credentials = telegram_send.load_credentials(env_file=env_file)
+        with httpx.Client(timeout=15.0) as client:
+            lines = bot.check(bot.BotApi(credentials, client), credentials.chat_id)
+    except (telegram_send.SendError, bot.BotError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
 def _cmd_bot(
     state: str,
     env_file: str,
@@ -1213,7 +1260,13 @@ def _cmd_bot(
     updates_path: str | None,
     chat_id: str | None,
     settings: config.Config,
+    check: bool = False,
 ) -> int:
+    if check:
+        if dry_run or updates_path is not None or chat_id is not None:
+            print("error: --check takes no other bot options", file=sys.stderr)
+            return 2
+        return _cmd_bot_check(env_file)
     if dry_run != (updates_path is not None):
         print("error: --dry-run and --updates go together", file=sys.stderr)
         return 2
@@ -1231,6 +1284,24 @@ def _cmd_bot(
             print(f"dry run: {config_path} not changed (would add {names})", file=sys.stderr)
         return updated.favourites
 
+    def remove_favourite(kind: str, fav_id: str) -> config.Favourites:
+        updated = config.remove_favourite(config_path, kind, fav_id, write=not dry_run)
+        if dry_run:
+            print(f"dry run: {config_path} not changed (would remove {fav_id})", file=sys.stderr)
+        return updated.favourites
+
+    def handler_for(store: stories.StoryStore, chat: str, log: send_log.SendLog) -> bot.Bot:
+        return bot.Bot(
+            store,
+            chat,
+            settings.favourites,
+            add_favourites,
+            remove_favourite=remove_favourite,
+            calendar=_cached_calendar(),
+            digest_sent=_digest_sent(log),
+            days_before=settings.days_before_fp1,
+        )
+
     try:
         if dry_run:
             text = _read_text(updates_path)
@@ -1242,8 +1313,8 @@ def _cmd_bot(
                 print("error: --updates must hold a list of updates", file=sys.stderr)
                 return 1
             chat = chat_id or telegram_send.load_chat_id(env_file=env_file)
-            with stories.StoryStore(state) as store:
-                handler = bot.Bot(store, chat, settings.favourites, add_favourites)
+            with send_log.SendLog(state) as log, stories.StoryStore(state) as store:
+                handler = handler_for(store, chat, log)
                 with contextlib.suppress(_DryRun), store.transaction():
                     bot.handle_all(handler, updates, _now(), _print_action)
                     raise _DryRun
@@ -1252,13 +1323,16 @@ def _cmd_bot(
         credentials = telegram_send.load_credentials(env_file=env_file)
         timeout = httpx.Timeout(15.0, read=bot.POLL_TIMEOUT_S + 15.0)
         with (
+            send_log.SendLog(state) as log,
             stories.StoryStore(state) as store,
             bot.OffsetStore(state) as offsets,
             httpx.Client(timeout=timeout) as client,
         ):
-            handler = bot.Bot(store, credentials.chat_id, settings.favourites, add_favourites)
+            handler = handler_for(store, credentials.chat_id, log)
+            api = bot.BotApi(credentials, client)
+            bot.register_commands(api)
             print("listening for updates (Ctrl-C to stop)", file=sys.stderr)
-            bot.listen(bot.BotApi(credentials, client), handler, offsets=offsets)
+            bot.listen(api, handler, offsets=offsets)
     except KeyboardInterrupt:
         return 0
     except json.JSONDecodeError as exc:
@@ -1591,7 +1665,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_alerts(args.state, args.dry_run, args.env_file)
     if args.command == "bot":
         return _cmd_bot(
-            args.state, args.env_file, args.dry_run, args.updates, args.chat_id, settings
+            args.state,
+            args.env_file,
+            args.dry_run,
+            args.updates,
+            args.chat_id,
+            settings,
+            args.check,
         )
     if args.command == "detect-stories":
         return _cmd_detect_stories(

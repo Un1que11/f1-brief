@@ -16,7 +16,7 @@ missing, checks Claude Code, runs `uv sync`, sets up the Telegram bot in `.env` 
 token, checks it, and finds your chat id after you send the bot any message), sends a test
 message, seeds the first stories, and installs two launchd agents: `local.f1brief.run` (hourly:
 digest, message after qualifying, story alerts) and `local.f1brief.bot` (the always-on bot for
-`/stories` and the Follow / Unfollow buttons).
+`/start`, its menu and the story buttons).
 
 ```bash
 ./setup.sh status      # are both agents running
@@ -207,24 +207,44 @@ team's facts in the same document (e.g. a teammate head-to-head for a driver who
 play). With no followed story the digest leaves the section out. `facts`, `digest` and `run`
 read it from `--state`.
 
-`f1brief bot` (F23) is the Telegram bot for the stories: a long-polling listener that runs until
-stopped (meant for its own launchd job with `KeepAlive`). It answers only the chat in
-`TELEGRAM_CHAT_ID`; updates from any other chat get no answer. Commands (Russian UI):
-`/stories` (followed and recent), `/story <id>` (timeline with sources), `/follow <id>`,
-`/unfollow <id>`, `/mute <id> <days>`, `/archive` (all, resolved included). Story messages
-carry "Отписаться" (one tap) or "Следить" buttons. Once a story is followed, the bot offers
-"Следить за <names>" for its drivers and teams that are not favourites yet; pressing it appends
-them to `config.toml` (people without a Jolpica id are skipped). Only one listener per bot can
-poll: a second one, or a webhook on the bot, stops it with an error.
+`f1brief bot` (F23, F40) is the Telegram bot: a long-polling listener that runs until stopped
+(meant for its own launchd job with `KeepAlive`). It answers only the chat in
+`TELEGRAM_CHAT_ID`; an update from any other chat gets no answer and is logged to stderr once
+per chat (`ignored chat <id>; TELEGRAM_CHAT_ID is <id>`), so a wrong chat id shows up in
+`bot.err.log`. Russian UI, buttons everywhere:
+
+- `/start` says in a few lines what the bot sends and when the next digest comes (Warsaw
+  time), then shows the main menu: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая гонка», «⭐ Избранное»,
+  «❓ Помощь». Any text that is not a command gets the menu, and every reply has «← Меню».
+- «📰 Сюжеты» (`/stories`) lists the followed and recent stories, each as a button that opens
+  its timeline with sources and the buttons «Следить», «Отписаться» (one tap) and «Без
+  уведомлений на 7 дней». Once a story is followed, the bot offers "Следить за <names>" for its
+  drivers and teams that are not favourites yet; pressing it appends them to `config.toml`
+  (people without a Jolpica id are skipped).
+- «🏁 Следующая гонка» (`/next`): the round, circuit and session times in Warsaw, and when the
+  digest for it comes (or when it was sent). The calendar is read from Jolpica at most once an
+  hour.
+- «⭐ Избранное» (`/favourites`): the favourite teams and drivers from `config.toml`, each with
+  a «✕» button that removes it from the file (comments and other entries are kept).
+- The typed commands keep working: `/story <id>`, `/follow <id>`, `/unfollow <id>`,
+  `/mute <id> <days>`, `/archive` (all, resolved included), `/help`.
+
+On start the listener registers its commands with `setMyCommands`, so they appear under the
+"/" button in Telegram. Every text lives in `src/f1brief/bot_texts.py`. Only one listener per
+bot can poll: a second one, or a webhook on the bot, stops it with an error.
 
 ```bash
+uv run f1brief bot --check                 # the bot's username, webhook, configured chat id
 uv run f1brief bot --dry-run --updates tests/fixtures/telegram/updates.json --chat-id 424242
 uv run f1brief bot                         # the listener (Ctrl-C to stop)
 ```
 
-`--dry-run` answers saved updates (a `getUpdates` answer or a JSON list) and prints the replies
-and buttons: nothing is sent, the story changes are rolled back and `config.toml` is not
-written. It needs no token; the chat to accept is `--chat-id` or `TELEGRAM_CHAT_ID`.
+`--check` asks Telegram for the bot's username and whether a webhook is set (a webhook blocks
+polling), prints them with the configured chat id and exits: the first thing to run when the
+bot stays silent. `--dry-run` answers saved updates (a `getUpdates` answer or a JSON list) and
+prints the replies and buttons: nothing is sent, the story changes are rolled back and
+`config.toml` is not written. It needs no token; the chat to accept is `--chat-id` or
+`TELEGRAM_CHAT_ID`.
 
 The archive is also a static HTML page (F28): every story with its timeline, each update
 linking to its source, and three filters, "Слежу" (followed now), "Все" and "Завершённые". It
