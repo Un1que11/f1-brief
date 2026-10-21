@@ -1,0 +1,67 @@
+# Builds the Docker image (F37) for both platforms and smoke-tests the amd64 one.
+# Nothing is pushed anywhere and no secrets are used: the smoke test checks that claude is
+# installed and that, without a credential, it fails with the clear message.
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - story_seeds.toml
+      - src/**
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - story_seeds.toml
+      - src/**
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build linux/arm64 + linux/amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build both platforms
+        run: docker buildx build --platform linux/arm64,linux/amd64 .
+
+      - name: Load the amd64 image
+        run: docker buildx build --platform linux/amd64 --load -t f1brief:ci .
+
+      - name: Smoke test
+        run: |
+          set -eu
+          docker run --rm f1brief:ci --help > /dev/null
+          docker run --rm --entrypoint claude f1brief:ci --version
+          test "$(docker run --rm --entrypoint id f1brief:ci -u)" != "0"
+          test "$(docker run --rm --entrypoint sh f1brief:ci -c 'echo $TZ')" = "Europe/Warsaw"
+          test "$(docker run --rm --entrypoint pwd f1brief:ci)" = "/data"
+          docker run --rm --entrypoint sh f1brief:ci -c 'test ! -e /data/.env && test ! -e /data/state.db'
+          if docker run --rm --entrypoint python f1brief:ci \
+              -c "from f1brief import digest; digest.ClaudeCli()('x')" 2> err.txt; then
+            echo "claude ran without a credential" >&2
+            exit 1
+          fi
+          grep -q "CLAUDE_CODE_OAUTH_TOKEN" err.txt
