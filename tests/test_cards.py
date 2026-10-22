@@ -84,7 +84,7 @@ def test_only_sources_from_the_facts_survive(document: dict[str, Any]) -> None:
 def test_every_item_of_a_card_cites_the_facts(document: dict[str, Any]) -> None:
     """Whatever the answer, each item left is either sourced from the facts or says that
     something is unknown."""
-    known = cards.facts_strings(document)
+    known = cards.facts_sources(document)
     raw = answer(
         section("standings", "Зачёт", {"text": "a", "sources": [standings_source(document)]}),
         section("drivers", "Гонщики", {"text": "b", "sources": [news_source(document)]}),
@@ -97,7 +97,43 @@ def test_every_item_of_a_card_cites_the_facts(document: dict[str, Any]) -> None:
     for item in items:
         assert item.unknown or item.sources
         for source in item.sources:
-            assert source.name in known and source.url in known
+            assert (source.name, source.url) in known
+
+
+def test_a_label_must_belong_to_its_link(document: dict[str, Any]) -> None:
+    """Name and URL each in the facts is not enough: they must be cited together."""
+    warnings: list[str] = []
+    news, standings = news_source(document), standings_source(document)
+    story = {"name": "Example News", "url": "https://example.com/seat"}
+    document = {**document, "story": {"source": story["name"], "link": story["url"]}}
+    raw = answer(
+        section(
+            "standings",
+            "Зачёт",
+            {"text": "mixed", "sources": [{"name": standings["name"], "url": news["url"]}]},
+            {"text": "other feed", "sources": [{"name": "No Such Feed", "url": news["url"]}]},
+            {"text": "news", "sources": [news]},
+            {"text": "story", "sources": [story]},
+        )
+    )
+    card = cards.from_model(cards.DIGEST, raw, document, "ru", warnings.append)
+    assert [i.text for i in card.sections[0].items] == ["news", "story"]
+    assert sum("not in the facts" in w for w in warnings) == 2
+
+
+def test_a_raw_url_in_the_text_is_removed(document: dict[str, Any]) -> None:
+    warnings: list[str] = []
+    raw = answer(
+        section(
+            "standings",
+            "Зачёт",
+            {"text": "См. (https://example.com/x?a=1) тут", "sources": [news_source(document)]},
+            {"text": "https://example.com/only", "sources": [news_source(document)]},
+        )
+    )
+    card = cards.from_model(cards.DIGEST, raw, document, "ru", warnings.append)
+    assert [i.text for i in card.sections[0].items] == ["См. тут"]
+    assert sum("removed a raw URL" in w for w in warnings) == 2
 
 
 def test_a_fenced_answer_is_accepted(document: dict[str, Any]) -> None:
@@ -206,6 +242,21 @@ def test_the_quali_and_summary_headers() -> None:
     summary = {"period": {"from": "2026-12-01", "to": "2027-01-01"}, "sections": {}}
     assert cards.header(cards.SUMMARY, summary, "ru") == ("01.12.2026–01.01.2027", ())
     assert cards.header(cards.DIGEST, {"sections": {"race": None}}, "ru") == ("", ())
+
+
+def test_the_weekend_dates_follow_the_warsaw_start_like_the_schedule() -> None:
+    # Jolpica's date is the UTC date: a session at 22:30 UTC is the next day in Warsaw.
+    race = {
+        "sessions": [
+            {"session": "FP1", "date": "2026-10-23", "start_warsaw": "2026-10-23T19:30:00+02:00"},
+            {"session": "Race", "date": "2026-10-25", "start_warsaw": "2026-10-26T00:30:00+01:00"},
+        ]
+    }
+    rows = cards.schedule_rows(race, "ru")
+    assert rows[-1] == ("Пн 26.10 00:30", "Гонка")
+    assert cards.header(cards.DIGEST, {"sections": {"race": race}}, "ru")[0].endswith(
+        "23–26.10.2026"
+    )
 
 
 @pytest.mark.parametrize(

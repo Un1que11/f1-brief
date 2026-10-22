@@ -205,6 +205,42 @@ def test_a_refused_first_message_can_be_retried(
     assert len(recorder.requests) == 1
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "1. Round\nAustin.",  # not a card at all
+        json.dumps(  # every item's source is made up, so nothing is left
+            {
+                "title": "Гран-при",
+                "sections": [
+                    {
+                        "id": "race",
+                        "heading": "Раунд",
+                        "items": [
+                            {"text": "x", "sources": [{"name": "X", "url": "https://x.test"}]}
+                        ],
+                    }
+                ],
+            }
+        ),
+    ],
+)
+def test_an_answer_that_is_not_a_usable_card_claims_nothing(
+    setup, answer: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pipeline, recorder = setup
+    pipeline.text = answer
+
+    assert main(["run"]) == 1
+    assert recorder.requests == []
+    assert record() is None  # not claimed: the next run tries again
+    assert "error: claude's digest answer: " in capsys.readouterr().err
+
+    pipeline.text = TWO_PARTS
+    assert main(["run"]) == 0
+    assert len(recorder.requests) == 1
+
+
 def test_a_failure_after_the_first_message_is_never_resent(
     setup, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

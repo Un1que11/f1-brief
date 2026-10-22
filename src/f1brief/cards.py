@@ -193,8 +193,42 @@ def _strings(value: Any) -> Iterator[str]:
 
 
 def facts_strings(document: Mapping[str, Any]) -> frozenset[str]:
-    """Every string in the facts document: a source's name and URL must be among them."""
+    """Every string in the facts document."""
     return frozenset(_strings(document))
+
+
+Pairs = frozenset[tuple[str, str]]
+
+
+def _pairs(value: Any) -> Iterator[tuple[str, str]]:
+    if isinstance(value, list | tuple):
+        for v in value:
+            yield from _pairs(v)
+        return
+    if not isinstance(value, Mapping):
+        return
+    link, listed, single = value.get("link"), value.get("sources"), value.get("source")
+    for entry in listed if isinstance(listed, list) else []:
+        # A section's sources: {"name", "url"}.
+        if isinstance(entry, Mapping):
+            name, url = entry.get("name"), entry.get("url")
+            if isinstance(name, str) and isinstance(url, str):
+                yield name, url
+        # A news item: the feeds it came from, with its link.
+        elif isinstance(entry, str) and isinstance(link, str):
+            yield entry, link
+    # A story update: its outlet, with its link.
+    if isinstance(single, str) and isinstance(link, str):
+        yield single, link
+    for v in value.values():
+        yield from _pairs(v)
+
+
+def facts_sources(document: Mapping[str, Any]) -> Pairs:
+    """Every (name, url) pair the facts document cites: a section's `sources` entries, a news
+    item's feeds with its `link`, a story update's `source` with its `link`. A card's source
+    must be one of these pairs, so a label always belongs to its link."""
+    return frozenset(_pairs(document))
 
 
 def labels(language: str) -> dict[str, Any]:
@@ -262,8 +296,15 @@ def _round_and_circuit(race: Mapping[str, Any] | None, language: str) -> str:
     return " · ".join(parts)
 
 
+def _session_day(session: Mapping[str, Any]) -> date | None:
+    """The Warsaw date of a session: from its start when known (as the schedule rows show
+    it), else its `date`."""
+    start = _parse_time(session.get("start_warsaw"))
+    return start.date() if start else _parse_day(session.get("date"))
+
+
 def _weekend_dates(race: Mapping[str, Any] | None) -> str:
-    days = [_parse_day(s.get("date")) for s in (race or {}).get("sessions") or []]
+    days = [_session_day(s) for s in (race or {}).get("sessions") or []]
     found = sorted(d for d in days if d is not None)
     return date_range(found[0], found[-1]) if found else ""
 
@@ -296,6 +337,7 @@ def header(kind: str, document: Mapping[str, Any], language: str) -> tuple[str, 
 
 # --- the model's answer ------------------------------------------------------------------
 
+_RAW_URL = re.compile(r"\(?\bhttps?://\S+")
 _FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 
 
@@ -324,7 +366,7 @@ def section_kind(section_id: str) -> str:
 
 
 def _sources(
-    raw: Any, known: frozenset[str] | None, where: str, warn: Callable[[str], None]
+    raw: Any, known: Pairs | None, where: str, warn: Callable[[str], None]
 ) -> tuple[Source, ...]:
     sources: list[Source] = []
     for entry in raw if isinstance(raw, list) else []:
@@ -334,7 +376,7 @@ def _sources(
         if not name or not is_web_link(url):
             warn(f"{where}: dropped a source without a name or a web link: {entry!r}")
             continue
-        if known is not None and (name not in known or url not in known):
+        if known is not None and (name, url) not in known:
             warn(f"{where}: dropped a source that is not in the facts: {name} {url}")
             continue
         if Source(name, url) not in sources:
@@ -343,11 +385,15 @@ def _sources(
 
 
 def _items(
-    raw: Any, known: frozenset[str] | None, where: str, warn: Callable[[str], None]
+    raw: Any, known: Pairs | None, where: str, warn: Callable[[str], None]
 ) -> tuple[Item, ...]:
     items: list[Item] = []
     for n, entry in enumerate(raw if isinstance(raw, list) else [], 1):
         text = _text(entry.get("text")) if isinstance(entry, dict) else ""
+        if _RAW_URL.search(text):
+            # Sources are linked labels; a raw URL in the text would be auto-linked.
+            warn(f"{where}, item {n}: removed a raw URL from the text")
+            text = _text(_RAW_URL.sub("", text))
         if not text:
             warn(f"{where}, item {n}: dropped an item without text")
             continue
@@ -364,11 +410,11 @@ def _items(
 def sections_from(
     kind: str,
     raw: Any,
-    known: frozenset[str] | None,
+    known: Pairs | None,
     warn: Callable[[str], None] = _warn,
 ) -> tuple[Section, ...]:
-    """The sections of the answer. With `known` (the facts' strings), a source that is not
-    among them is dropped, and so is an item left without a source unless it says that
+    """The sections of the answer. With `known` (the facts' (name, url) pairs), a source that
+    is not among them is dropped, and so is an item left without a source unless it says that
     something is unknown. A section left without items is dropped."""
     sections: list[Section] = []
     for n, entry in enumerate(raw if isinstance(raw, list) else [], 1):
@@ -402,7 +448,7 @@ def from_model(
     title = _text(answer.get("title"))
     if not title:
         raise CardError("the answer has no title")
-    sections = sections_from(kind, answer.get("sections"), facts_strings(document), warn)
+    sections = sections_from(kind, answer.get("sections"), facts_sources(document), warn)
     if not sections:
         raise CardError("no section with a sourced item is left in the answer")
     subtitle, schedule = header(kind, document, language)
