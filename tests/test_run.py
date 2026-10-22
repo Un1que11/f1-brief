@@ -89,7 +89,8 @@ def test_sends_once_when_due(setup, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["run"]) == 0
     assert len(recorder.requests) == 1
     assert recorder.texts()[0] == (
-        "🏁 <b>Гран-при США</b>\n\n<b>🗓 Раунд</b>\n• Остин.\n\n<b>🔮 Чего ожидать</b>\n• Дождь."
+        "🏁 <b>Гран-при США</b>\nЭтап 18\n\n"  # noqa: RUF001
+        "<b>🗓 Раунд</b>\n• Остин.\n\n<b>🔮 Чего ожидать</b>\n• Дождь."
     )
     saved = record()
     assert saved is not None and (saved.status, saved.messages) == (Status.SENT, 1)

@@ -133,12 +133,13 @@ def test_an_unknown_section_id_is_kept_with_a_plain_marker(document: dict[str, A
 # --- what code adds: dates and the schedule -------------------------------------------------
 
 
-def test_the_digest_header_has_the_weekend_dates_and_the_schedule(
+def test_the_digest_header_has_the_round_track_dates_and_the_schedule(
     document: dict[str, Any],
 ) -> None:
     raw = answer(section("expect", "Чего ждать", {"text": "x", "unknown": True}))
     card = cards.from_model(cards.DIGEST, raw, document, "ru", lambda _: None)
-    assert card.subtitle == "23–25.10.2026"
+    # Digest section 1 is the round, the track and the schedule: the prompt leaves them to code.
+    assert card.subtitle == "Этап 18 · Circuit of the Americas, Austin · 23–25.10.2026"
     # Warsaw leaves summer time on 25.10: the race is still at 21:00 Warsaw time.
     assert card.schedule == (
         ("Пт 23.10 19:30", "Практика 1"),
@@ -149,9 +150,30 @@ def test_the_digest_header_has_the_weekend_dates_and_the_schedule(
     )
     first = cards.render(card)[0]
     assert first.startswith(
-        "🏁 <b>Гран-при США</b>\n23–25.10.2026\n\nРасписание, время варшавское\n"
+        "🏁 <b>Гран-при США</b>\nЭтап 18 · Circuit of the Americas, Austin · 23–25.10.2026\n\n"
+        "Расписание, время варшавское\n"
         "<pre>Пт 23.10 19:30  Практика 1\nПт 23.10 23:00  Практика 2\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        ("ru", "Этап 18 · Circuit of the Americas, Austin · 23–25.10.2026"),
+        ("en", "Round 18 · Circuit of the Americas, Austin · 23–25.10.2026"),
+        ("pl", "Runda 18 · Circuit of the Americas, Austin · 23–25.10.2026"),
+    ],
+)
+def test_the_round_label_follows_the_language(
+    document: dict[str, Any], language: str, expected: str
+) -> None:
+    assert cards.header(cards.DIGEST, document, language)[0] == expected
+
+
+def test_a_header_without_round_or_circuit_keeps_the_dates() -> None:
+    race = {"sessions": [{"session": "Race", "date": "2026-10-25", "start_warsaw": None}]}
+    document = {"sections": {"race": race}}
+    assert cards.header(cards.DIGEST, document, "ru")[0] == "25.10.2026"
 
 
 @pytest.mark.parametrize(

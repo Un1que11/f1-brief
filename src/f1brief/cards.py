@@ -97,6 +97,7 @@ LABELS: dict[str, dict[str, Any]] = {
         "schedule": "Расписание, время варшавское",
         "tbc": "время уточняется",
         "race_at": "Гонка: {when} по Варшаве",
+        "round": "Этап {round}",
     },
     "en": {
         "weekdays": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
@@ -112,6 +113,7 @@ LABELS: dict[str, dict[str, Any]] = {
         "schedule": "Schedule, Warsaw time",
         "tbc": "time to be confirmed",
         "race_at": "Race: {when}, Warsaw time",
+        "round": "Round {round}",
     },
     "pl": {
         "weekdays": ("Pn", "Wt", "Śr", "Cz", "Pt", "Sb", "Nd"),
@@ -127,6 +129,7 @@ LABELS: dict[str, dict[str, Any]] = {
         "schedule": "Harmonogram, czas warszawski",
         "tbc": "godzina do potwierdzenia",
         "race_at": "Wyścig: {when} czasu warszawskiego",
+        "round": "Runda {round}",
     },
 }
 NO_TIME = "--:--"
@@ -245,6 +248,20 @@ def date_range(first: date, last: date) -> str:
     return f"{first:%d}–{last:%d.%m.%Y}"
 
 
+def _round_and_circuit(race: Mapping[str, Any] | None, language: str) -> str:
+    """ "Этап 18 · Circuit of the Americas, Austin": digest section 1 asks for the round and
+    the track, and the prompt leaves them to code."""
+    race = race or {}
+    parts: list[str] = []
+    if isinstance(race.get("round"), int):
+        parts.append(labels(language)["round"].format(round=race["round"]))
+    circuit = race.get("circuit") or {}
+    place = ", ".join(p for p in (circuit.get("name"), circuit.get("locality")) if p)
+    if place:
+        parts.append(place)
+    return " · ".join(parts)
+
+
 def _weekend_dates(race: Mapping[str, Any] | None) -> str:
     days = [_parse_day(s.get("date")) for s in (race or {}).get("sessions") or []]
     found = sorted(d for d in days if d is not None)
@@ -270,7 +287,8 @@ def header(kind: str, document: Mapping[str, Any], language: str) -> tuple[str, 
     """The subtitle and the schedule rows code adds to a card of `kind`."""
     race = (document.get("sections") or {}).get("race")
     if kind == DIGEST:
-        return _weekend_dates(race), schedule_rows(race, language)
+        parts = (_round_and_circuit(race, language), _weekend_dates(race))
+        return " · ".join(p for p in parts if p), schedule_rows(race, language)
     if kind == QUALI:
         return _race_start(race, language), ()
     return _period(document), ()
