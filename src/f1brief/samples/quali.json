@@ -1,0 +1,57 @@
+{
+  "kind": "quali",
+  "language": "ru",
+  "title": "Гран-при США (образец)",
+  "subtitle": "Гонка: Вс 25.10 21:00 по Варшаве",
+  "schedule": [],
+  "sections": [
+    {
+      "id": "qualifying",
+      "heading": "Квалификация",
+      "items": [
+        {
+          "text": "Russell — **P3**, вышел в Q3, **+0.214 с** к поулу.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/18/qualifying.json"
+            }
+          ]
+        },
+        {
+          "text": "Ocon — **P9**, Bearman — **P12**: Ocon **7–3** Bearman в квалификациях сезона.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/18/qualifying.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "outlook",
+      "heading": "Что это значит для гонки",
+      "items": [
+        {
+          "text": "Russell в последних гонках отыгрывал **2–3 позиции** со старта.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/drivers/russell/results.json"
+            }
+          ]
+        },
+        {
+          "text": "Новостей о штрафах на решётке для избранных нет.",
+          "sources": [
+            {
+              "name": "Motorsport.com",
+              "url": "https://example.com/sample/no-penalties"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

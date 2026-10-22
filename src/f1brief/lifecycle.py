@@ -23,6 +23,7 @@ from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply
 from f1brief.bot_texts import days_ru
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore
+from f1brief.telegram_html import escape
 
 QUIET_AFTER = timedelta(days=60)
 
@@ -80,7 +81,10 @@ def text(offer: Offer, now: datetime) -> str:
 
 
 def reply(offer: Offer, now: datetime) -> Reply:
-    return Reply(text(offer, now), ((Button("Отписаться", f"{UNFOLLOW}:{offer.story.id}"),),))
+    """The offer as one Telegram HTML message (the text escaped) with "Отписаться"."""
+    return Reply(
+        escape(text(offer, now)), ((Button("Отписаться", f"{UNFOLLOW}:{offer.story.id}"),),)
+    )
 
 
 def _warn(message: str) -> None:

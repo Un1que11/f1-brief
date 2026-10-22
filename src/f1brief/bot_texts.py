@@ -6,14 +6,17 @@ pressed buttons and the command menu, with the date formats they use.
 They live here, apart from the bot's logic, so the message catalog (F30) can take them over
 as they are: plain strings, `str.format` templates with named fields, and a few small
 functions where a text depends on a number or a date. Russian only for now; times are Warsaw
-time, 24-hour.
+time, 24-hour. The texts are plain: the bot escapes them for Telegram HTML (F41); only
+`next_race` lays its text out as `telegram_html` blocks.
 """
 
 from collections.abc import Sequence
 from datetime import datetime
 
 from f1brief import jolpica
+from f1brief import telegram_html as th
 from f1brief.schedule import WARSAW, Race, SessionKind
+from f1brief.stories import StoryStatus
 
 # --- formats ------------------------------------------------------------------------------
 
@@ -127,22 +130,34 @@ DIGEST_SOON = "Дайджест к этому этапу придёт в теч�
 DIGEST_NOT_SENT = "Дайджест к этому этапу не отправлялся."
 
 
-def next_race(race: Race, digest: str) -> str:
-    """Round, circuit and session times in Warsaw, then the line about the digest."""
-    lines = [
-        f"🏁 Этап {race.round}: {race.name} ({race.season})",
-        f"{race.circuit.name}, {race.circuit.locality}, {race.circuit.country}",
-        "",
-        "Расписание (время варшавское):",
-    ]
+NO_TIME = "--:--"
+SCHEDULE = "Расписание, время варшавское:"
+TIME_TBC = f"{NO_TIME} — время уточняется"
+SOURCE = "Источник: {source}."
+
+
+def next_race(race: Race, digest: str) -> list[th.Block]:
+    """Round and circuit, the session times in Warsaw as an aligned table, then the line
+    about the digest and the source."""
+    title = f"Этап {race.round}: {race.name} ({race.season})"
+    top = th.Block(
+        (
+            th.Line((th.Span("🏁 "), th.Span(title, bold=True))),
+            th.plain(f"{race.circuit.name}, {race.circuit.locality}, {race.circuit.country}"),
+        )
+    )
+    rows: list[str] = []
     for session in race.sessions:
         if session.start_utc is not None:
             when = day_time(session.start_utc)
         else:
-            when = f"{WEEKDAYS[session.date.weekday()]} {session.date:%d.%m}, время уточняется"
-        lines.append(f"{when} — {SESSIONS[session.kind]}")
-    lines += ["", digest, f"Источник: {jolpica.SOURCE_NAME}."]
-    return "\n".join(lines)
+            when = f"{WEEKDAYS[session.date.weekday()]} {session.date:%d.%m} {NO_TIME}"
+        rows.append(f"{when}  {SESSIONS[session.kind]}")
+    lines = [th.plain(SCHEDULE), th.Line((th.Span("\n".join(rows), pre=True),))]
+    if any(session.start_utc is None for session in race.sessions):
+        lines.append(th.plain(TIME_TBC))
+    bottom = th.Block((th.plain(digest), th.plain(SOURCE.format(source=jolpica.SOURCE_NAME))))
+    return [top, th.Block(tuple(lines)), bottom]
 
 
 # --- favourites ---------------------------------------------------------------------------
@@ -196,6 +211,19 @@ ARCHIVE_CAPTION = (
     "Архив страницей: открой файл в браузере. Фильтры: слежу / все / завершённые, "
     "у каждого обновления — ссылка на источник."
 )
+
+# The status chips of a story (alerts, the timeline).
+STATUS_ICONS = {
+    StoryStatus.RUMOR: "🟡",
+    StoryStatus.DEVELOPING: "🟠",
+    StoryStatus.CONFIRMED: "🟢",
+    StoryStatus.DENIED: "🔴",
+    StoryStatus.RESOLVED: "⚪",
+}
+ICON_STORY = "📰"
+ICON_ALERT = "🔔"
+ALERT_STATUS_CHANGED = "{chip} (статус изменился)"
+BUTTON_TIMELINE = "Хронология"
 
 STORY_TITLE = "#{id} {title}"
 STORY_STATUS = "Статус: {status} · {following}"

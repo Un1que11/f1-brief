@@ -14,9 +14,11 @@ they are left out); the favourites screen removes one with a tap. The typed comm
 
 Every text comes from `bot_texts`. Only updates from the configured chat are handled; an
 update from any other chat gets no answer and is logged to stderr once per chat, so a wrong
-`TELEGRAM_CHAT_ID` is visible. Replies are plain text (no parse mode), so story titles and
-summaries need no escaping. The token is part of every Bot API URL, so it is redacted from
-every error here.
+`TELEGRAM_CHAT_ID` is visible. Replies are Telegram HTML (F41, `telegram_html`): every text
+from `bot_texts`, story titles and summaries included, is escaped, and the story timeline and
+the next race are laid out as cards (a bold title, a status chip, the schedule as a `<pre>`
+block, a long timeline folded into an expandable quote). The token is part of every Bot API
+URL, so it is redacted from every error here.
 
 `/archive` also sends the archive as a static HTML page (F28, `archive_page`) as a file.
 
@@ -40,6 +42,7 @@ import httpx
 
 from f1brief import archive_page, send_window
 from f1brief import bot_texts as texts
+from f1brief import telegram_html as th
 from f1brief.config import ConfigError, Favourite, Favourites
 from f1brief.schedule import Race, ScheduleError, next_race
 from f1brief.send_log import StateError
@@ -60,8 +63,10 @@ POLL_TIMEOUT_S = 50
 # Waits after a failed poll, doubling up to the maximum.
 RETRY_MIN_S = 5.0
 RETRY_MAX_S = 300.0
-# Telegram allows 4096 characters (UTF-16 code units) per message; leave room for emoji.
+# Telegram allows 4096 characters (UTF-16 code units) per message; leave some room.
 MAX_LENGTH = 4000
+# A timeline longer than this (rendered characters) is folded into an expandable quote.
+FOLD_CHARS = 600
 MAX_MUTE_DAYS = 365
 # The days the "Без уведомлений" button mutes a story for.
 MUTE_BUTTON_DAYS = 7
@@ -125,7 +130,7 @@ Keyboard = tuple[tuple[Button, ...], ...]
 
 @dataclass(frozen=True)
 class Reply:
-    """A message to the chat, with inline buttons (rows of them)."""
+    """A message to the chat in Telegram HTML, with inline buttons (rows of them)."""
 
     text: str
     buttons: Keyboard = ()
@@ -222,26 +227,22 @@ def _short(title: str, limit: int = BUTTON_TITLE) -> str:
     return title if len(title) <= limit else title[: limit - 1].rstrip() + "…"
 
 
-def chunks(text: str, limit: int = MAX_LENGTH) -> list[str]:
-    """`text` cut at line ends into pieces of at most `limit` characters."""
-    pieces: list[str] = []
-    current = ""
-    for line in text.split("\n"):
-        while len(line) > limit:
-            if current:
-                pieces.append(current)
-                current = ""
-            pieces.append(line[:limit])
-            line = line[limit:]
-        candidate = f"{current}\n{line}" if current else line
-        if current and len(candidate) > limit:
-            pieces.append(current)
-            current = line
-        else:
-            current = candidate
-    if current.strip():
-        pieces.append(current)
-    return pieces or [text[:limit]]
+def status_chip(status: StoryStatus) -> str:
+    """ "🟡 слух"."""
+    return f"{texts.STATUS_ICONS[status]} {STATUS_RU[status]}"
+
+
+def source_line(text: str, label: str, url: str) -> th.Line:
+    """`text`, then the source as a short linked label."""
+    spans = [th.Span(text)] if text else []
+    if label:
+        spans += [th.Span(" · " if text else ""), th.Span(label, href=url)]
+    return th.Line(tuple(spans) or (th.Span(""),))
+
+
+def folded(lines: Sequence[th.Line], sep: str = "\n") -> bool:
+    """Whether lines this long go into an expandable quote."""
+    return sum(len(line.render()) for line in lines) + len(sep) * len(lines) > FOLD_CHARS
 
 
 MENU_ROW = (Button(texts.MENU_BACK, f"{MENU}:{MAIN}"),)
@@ -259,13 +260,20 @@ MAIN_MENU: Keyboard = (
 )
 
 
-def _replies(text: str, buttons: Keyboard = (), menu: bool = True) -> list[Action]:
-    """The text in as many messages as it needs; the buttons (and, with `menu`, the "← Меню"
-    row) go with the last one."""
+def html_replies(
+    blocks: Sequence[th.Block], buttons: Keyboard = (), menu: bool = True
+) -> list[Reply]:
+    """The blocks in as many HTML messages as they need; the buttons (and, with `menu`, the
+    "← Меню" row) go with the last one."""
     if menu:
         buttons = (*buttons, MENU_ROW)
-    parts = chunks(text)
+    parts = th.pack(blocks, MAX_LENGTH)
     return [Reply(p, buttons if i == len(parts) - 1 else ()) for i, p in enumerate(parts)]
+
+
+def _replies(text: str, buttons: Keyboard = (), menu: bool = True) -> list[Action]:
+    """Plain text (escaped) as replies, like `html_replies`."""
+    return list(html_replies(th.paragraphs(text), buttons, menu))
 
 
 AddFavourites = Callable[[Sequence[Favourite], Sequence[Favourite]], Favourites]
@@ -412,29 +420,31 @@ class Bot:
 
     def _timeline(self, story: Story, now: datetime) -> list[Action]:
         following = self._following(story.id)
-        lines = [
-            texts.STORY_TITLE.format(id=story.id, title=story.title_ru),
-            texts.STORY_STATUS.format(
-                status=STATUS_RU[story.status],
-                following=texts.STORY_FOLLOWED if following else texts.STORY_NOT_FOLLOWED,
+        title = texts.STORY_TITLE.format(id=story.id, title=story.title_ru)
+        head = [
+            th.Line((th.Span(f"{texts.ICON_STORY} "), th.Span(title, bold=True))),
+            th.plain(
+                texts.STORY_STATUS.format(
+                    status=status_chip(story.status),
+                    following=texts.STORY_FOLLOWED if following else texts.STORY_NOT_FOLLOWED,
+                )
             ),
-            story.summary_ru,
-            "",
-            texts.TIMELINE,
         ]
+        if story.summary_ru:
+            head.append(th.plain(story.summary_ru))
+        entries: list[th.Line] = []
         for entry in self.store.timeline(story.id):
             update = entry.update
             when = texts.date(update.published_at or entry.recorded_at)
-            lines += [
-                "",
-                texts.TIMELINE_ENTRY.format(
-                    date=when, headline=update.headline, source=update.source
-                ),
-                update.what_changed_ru,
-                *status_line(entry),
-                update.url,
-            ]
-        return _replies("\n".join(lines), self._story_buttons(story, following))
+            spans = [th.Span(f"{when} — "), th.Span(update.headline, bold=True), th.Span("\n")]
+            spans += source_line(update.what_changed_ru, update.source, update.url).spans
+            spans += [th.Span(f"\n{line}") for line in status_line(entry)]
+            entries.append(th.Line(tuple(spans)))
+        blocks = [th.Block(tuple(head))]
+        if entries:
+            heading = th.Line((th.Span(texts.TIMELINE, bold=True),))
+            blocks.append(th.Block(tuple(entries), heading, folded(entries, "\n\n"), "\n\n"))
+        return list(html_replies(blocks, self._story_buttons(story, following)))
 
     def _follow(self, story: Story, now: datetime) -> list[Action]:
         template = texts.FOLLOWED if self.store.follow(story.id, now) else texts.ALREADY_FOLLOWED
@@ -512,7 +522,7 @@ class Bot:
             digest = texts.DIGEST_SOON
         else:
             digest = texts.DIGEST_NOT_SENT
-        return _replies(texts.next_race(race, digest))
+        return list(html_replies(texts.next_race(race, digest)))
 
     # --- favourites ----------------------------------------------------------------------
 
@@ -727,6 +737,7 @@ class BotApi:
         payload: dict[str, Any] = {
             "chat_id": self.credentials.chat_id,
             "text": action.text,
+            "parse_mode": th.PARSE_MODE,
             "link_preview_options": {"is_disabled": True},
         }
         if action.buttons:

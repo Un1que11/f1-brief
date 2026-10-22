@@ -26,6 +26,36 @@ PARSE_ERROR = {
 }
 
 
+# A saved card (F41) as `digest` writes it, and the message it renders to.
+WEATHER = "https://api.open-meteo.com/v1/forecast?latitude=30.13&longitude=-97.64"
+CARD = {
+    "kind": "digest",
+    "language": "ru",
+    "title": "Гран-при <США>",
+    "subtitle": "23–25.10.2026",
+    "schedule": [],
+    "sections": [
+        {
+            "id": "weather",
+            "heading": "Погода",
+            "items": [
+                {"text": "Сухо, **27 °C**.", "sources": [{"name": "Open-Meteo", "url": WEATHER}]}
+            ],
+        }
+    ],
+}
+CARD_HTML = (
+    "🏁 <b>Гран-при &lt;США&gt;</b>\n23–25.10.2026\n\n<b>🌦 Погода</b>\n"
+    "• Сухо, <b>27 °C</b>. · "
+    '<a href="https://api.open-meteo.com/v1/forecast?latitude=30.13&amp;longitude=-97.64">'
+    "Open-Meteo</a>"
+)
+
+
+def card_json(card: dict | None = None) -> str:
+    return json.dumps(card or CARD, ensure_ascii=False)
+
+
 def too_many(retry_after: int) -> httpx.Response:
     body = {
         "ok": False,
@@ -122,7 +152,7 @@ def test_sends_each_message_as_markdown_v2_in_order() -> None:
     assert json.loads(recorder.requests[0].content) == {
         "chat_id": CHAT_ID,
         "text": "*1\\. Раунд*",
-        "parse_mode": "MarkdownV2",
+        "parse_mode": "HTML",
         "link_preview_options": {"is_disabled": True},
     }
     assert recorder.texts() == ["*1\\. Раунд*", "Дождь\\.", "Конец"]
@@ -278,11 +308,12 @@ def test_send_dry_run_prints_the_messages_without_settings_or_network(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_settings: Path
 ) -> None:
     monkeypatch.setattr(cli, "_telegram_client", no_client)
-    monkeypatch.setattr("sys.stdin", io.StringIO("7. Чего ожидать\nДождь."))
+    monkeypatch.setattr("sys.stdin", io.StringIO(card_json()))
 
     assert main(["send", "--dry-run"]) == 0
     captured = capsys.readouterr()
-    assert captured.out == "--- message 1/1, 26 chars ---\n*7\\. Чего ожидать*\nДождь\\.\n"
+    size = len(CARD_HTML.encode("utf-16-le")) // 2
+    assert captured.out == f"--- message 1/1, {size} chars ---\n{CARD_HTML}\n"
     assert captured.err == "dry run: 1 message(s) not sent\n"
 
 
@@ -292,13 +323,14 @@ def test_send_posts_the_formatted_digest(
     (no_settings / ".env").write_text(
         f"TELEGRAM_BOT_TOKEN={TOKEN}\nTELEGRAM_CHAT_ID={CHAT_ID}\n", encoding="utf-8"
     )
-    digest = no_settings / "digest.txt"
-    digest.write_text("1. Раунд\nГонка в 21:00.\n\n6. Погода\nСухо.\n", encoding="utf-8")
+    digest = no_settings / "digest.json"
+    digest.write_text(card_json(), encoding="utf-8")
     recorder = Recorder()
     monkeypatch.setattr(cli, "_telegram_client", recorder.client)
 
     assert main(["send", "--input", str(digest)]) == 0
-    assert recorder.texts() == ["*1\\. Раунд*\nГонка в 21:00\\.\n\n*6\\. Погода*\nСухо\\."]
+    assert recorder.texts() == [CARD_HTML]
+    assert json.loads(recorder.requests[0].content)["parse_mode"] == "HTML"
     assert [str(r.url) for r in recorder.requests] == [SENT_URL]
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -312,7 +344,7 @@ def test_send_reads_settings_from_the_given_env_file(
     env_file.write_text(f"TELEGRAM_BOT_TOKEN={TOKEN}\nTELEGRAM_CHAT_ID={CHAT_ID}\n")
     recorder = Recorder()
     monkeypatch.setattr(cli, "_telegram_client", recorder.client)
-    monkeypatch.setattr("sys.stdin", io.StringIO("Дождь."))
+    monkeypatch.setattr("sys.stdin", io.StringIO(card_json()))
 
     assert main(["send", "--env-file", str(env_file)]) == 0
     assert len(recorder.requests) == 1
@@ -322,7 +354,7 @@ def test_send_without_settings_fails_before_any_request(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_settings: Path
 ) -> None:
     monkeypatch.setattr(cli, "_telegram_client", no_client)
-    monkeypatch.setattr("sys.stdin", io.StringIO("Дождь."))
+    monkeypatch.setattr("sys.stdin", io.StringIO(card_json()))
 
     assert main(["send"]) == 1
     assert capsys.readouterr().err == (
@@ -338,7 +370,7 @@ def test_send_reports_a_refusal_without_the_token(
     monkeypatch.setattr(
         cli, "_telegram_client", Recorder(httpx.Response(400, json=PARSE_ERROR)).client
     )
-    monkeypatch.setattr("sys.stdin", io.StringIO("Дождь."))
+    monkeypatch.setattr("sys.stdin", io.StringIO(card_json()))
 
     assert main(["send"]) == 1
     captured = capsys.readouterr()
@@ -346,10 +378,15 @@ def test_send_reports_a_refusal_without_the_token(
     assert TOKEN not in captured.out + captured.err
 
 
-def test_send_rejects_an_empty_digest(
+def test_send_rejects_what_is_not_a_saved_card(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_settings: Path
 ) -> None:
     monkeypatch.setattr(cli, "_telegram_client", no_client)
-    monkeypatch.setattr("sys.stdin", io.StringIO("\n\n"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("1. Раунд\nДождь."))
     assert main(["send"]) == 1
-    assert capsys.readouterr().err == "error: the digest is empty\n"
+    assert capsys.readouterr().err.startswith("error: stdin is not a saved card (")
+    monkeypatch.setattr("sys.stdin", io.StringIO(card_json({**CARD, "sections": []})))
+    assert main(["send"]) == 1
+    assert (
+        capsys.readouterr().err == "error: stdin is not a saved card (the card has no sections)\n"
+    )

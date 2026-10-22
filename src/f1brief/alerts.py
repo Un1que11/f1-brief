@@ -2,7 +2,9 @@
 
 An update is alerted on when its story is followed and it was recorded after the story was
 followed. One alert covers all of a story's waiting updates, each with its source, and
-carries the "Отписаться" button the bot (F23) answers. At most `MAX_PER_DAY` alerts go out
+carries the "Хронология" and "Отписаться" buttons the bot (F23) answers. It reads like a
+card (F41): `🔔 <b>title</b>`, the story's status chip, then one line per update with what
+changed and the source as a short linked label. At most `MAX_PER_DAY` alerts go out
 per Warsaw calendar day, and none in the quiet hours (23:00-08:00 Warsaw): those wait for the
 first run after them, the oldest first. Updates of a muted story are skipped, not saved for
 later, and so is an update that has waited longer than `STALE_AFTER` (the digest's
@@ -18,7 +20,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply, chunks, status_line
+from f1brief import bot_texts as texts
+from f1brief import telegram_html as th
+from f1brief.bot import (
+    STORY,
+    UNFOLLOW,
+    BotError,
+    Button,
+    Reply,
+    html_replies,
+    source_line,
+    status_chip,
+)
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore, StoryUpdate
 
@@ -89,27 +102,39 @@ def plan(store: StoryStore, now: datetime, max_per_day: int = MAX_PER_DAY) -> Pl
     return Plan(tuple(alerts[:room]), tuple(alerts[room:]), tuple(skip), quiet)
 
 
-def text(alert: Alert) -> str:
+def blocks(alert: Alert) -> list[th.Block]:
     story = alert.story
-    lines = [f"Новое в сюжете #{story.id} «{story.title_ru}» ({STATUS_RU[story.status]})"]
-    for entry in alert.updates:
-        update = entry.update
-        lines += [
-            "",
-            update.what_changed_ru,
-            *status_line(entry),
-            f"{update.headline} ({update.source})",
-            update.url,
-        ]
-    lines += ["", f"Хронология: /story {story.id}"]
-    return "\n".join(lines)
+    chip = status_chip(story.status)
+    if any(entry.status for entry in alert.updates):
+        chip = texts.ALERT_STATUS_CHANGED.format(chip=chip)
+    head = th.Block(
+        (
+            th.Line((th.Span(f"{texts.ICON_ALERT} "), th.Span(story.title_ru, bold=True))),
+            th.plain(chip),
+        )
+    )
+    lines = tuple(
+        source_line(f"• {e.update.what_changed_ru}", e.update.source, e.update.url)
+        for e in alert.updates
+    )
+    return [head, th.Block(lines)]
+
+
+def text(alert: Alert) -> str:
+    """The alert's first message, as Telegram HTML."""
+    return replies(alert)[0].text
 
 
 def replies(alert: Alert) -> list[Reply]:
-    """The alert's messages (one unless it is long); the last carries "Отписаться"."""
-    buttons = ((Button("Отписаться", f"{UNFOLLOW}:{alert.story.id}"),),)
-    parts = chunks(text(alert))
-    return [Reply(p, buttons if i == len(parts) - 1 else ()) for i, p in enumerate(parts)]
+    """The alert's messages (one unless it is long); the last carries the buttons."""
+    story_id = alert.story.id
+    buttons = (
+        (
+            Button(texts.BUTTON_TIMELINE, f"{STORY}:{story_id}"),
+            Button(texts.BUTTON_UNFOLLOW, f"{UNFOLLOW}:{story_id}"),
+        ),
+    )
+    return html_replies(blocks(alert), buttons, menu=False)
 
 
 def _warn(message: str) -> None:

@@ -19,6 +19,7 @@ from f1brief import (
     alerts,
     archive_page,
     bot,
+    cards,
     config,
     digest,
     drivers,
@@ -30,6 +31,7 @@ from f1brief import (
     news_archive,
     offseason,
     pace,
+    preview,
     schedule,
     send_log,
     send_window,
@@ -37,7 +39,7 @@ from f1brief import (
     stories,
     story_detection,
     story_seeds,
-    telegram_format,
+    telegram_html,
     telegram_send,
     track_history,
     weather,
@@ -131,7 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     digest_cmd = commands.add_parser(
-        "digest", help="write the digest text from the facts with headless Claude Code"
+        "digest",
+        help="write the digest from the facts with headless Claude Code, as a card (JSON)",
     )
     digest_cmd.add_argument(
         "--facts", metavar="PATH", help="a saved `facts` document (default: collect now)"
@@ -196,22 +199,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     format_cmd = commands.add_parser(
-        "format", help="show a digest text as Telegram messages (MarkdownV2, split to fit)"
+        "format",
+        help="show a saved card (from digest, summary or quali) as Telegram messages (HTML, "
+        "split to fit)",
     )
-    format_cmd.add_argument(
-        "--input", metavar="PATH", help="a saved `digest` text (default: stdin)"
-    )
+    format_cmd.add_argument("--input", metavar="PATH", help="a saved card (JSON; default: stdin)")
     format_cmd.add_argument(
         "--limit",
         type=int,
-        default=telegram_format.MAX_LENGTH,
-        help=f"maximum message length (default: {telegram_format.MAX_LENGTH})",
+        default=telegram_html.MAX_LENGTH,
+        help=f"maximum message length (default: {telegram_html.MAX_LENGTH})",
     )
 
     send_cmd = commands.add_parser(
-        "send", help="send a digest text to the Telegram chat (or print it with --dry-run)"
+        "send", help="send a saved card to the Telegram chat (or print it with --dry-run)"
     )
-    send_cmd.add_argument("--input", metavar="PATH", help="a saved `digest` text (default: stdin)")
+    send_cmd.add_argument("--input", metavar="PATH", help="a saved card (JSON; default: stdin)")
     send_cmd.add_argument(
         "--dry-run",
         action="store_true",
@@ -223,6 +226,25 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=f"where to look for {telegram_send.TOKEN_VAR} and {telegram_send.CHAT_ID_VAR} "
         f"when they are not in the environment (default: {telegram_send.DEFAULT_ENV_FILE})",
+    )
+
+    preview_cmd = commands.add_parser(
+        "preview",
+        help="render a sample message from recorded fixtures, to check the look in Telegram",
+    )
+    preview_cmd.add_argument(
+        "--kind", choices=preview.KINDS, default="digest", help="which message (default: digest)"
+    )
+    preview_cmd.add_argument(
+        "--send",
+        action="store_true",
+        help=f"send it to the admin chat ({telegram_send.CHAT_ID_VAR}) instead of printing it",
+    )
+    preview_cmd.add_argument(
+        "--env-file",
+        default=telegram_send.DEFAULT_ENV_FILE,
+        metavar="PATH",
+        help=f"where to look for the Telegram settings (default: {telegram_send.DEFAULT_ENV_FILE})",
     )
 
     def add_state(cmd: argparse.ArgumentParser) -> None:
@@ -660,13 +682,49 @@ def _cmd_digest(
         _write(digest.build_prompt(document, digest.DIGEST_TEMPLATE, language), output)
         return 0
     _warn_missing(document)
+    card = _card(
+        cards.DIGEST,
+        lambda: digest.generate(document, digest.ClaudeCli(model=model), language),
+        document,
+        language,
+    )
+    if card is None:
+        return 1
+    _write_card(card, output)
+    return 0
+
+
+def _card(
+    kind: str, generate: Callable[[], str], document: dict, language: str
+) -> cards.Card | None:
+    """The card `generate` writes for `document`, or None (after printing why)."""
     try:
-        text = digest.generate(document, digest.ClaudeCli(model=model), language)
+        answer = generate()
     except digest.GenerationError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
-    _write(text + "\n", output)
-    return 0
+        return None
+    try:
+        return cards.from_model(kind, answer, document, language)
+    except cards.CardError as exc:
+        print(f"error: claude's {kind} answer: {exc}", file=sys.stderr)
+        return None
+
+
+def _write_card(card: cards.Card, output: str | None) -> None:
+    _write(json.dumps(card.to_dict(), ensure_ascii=False, indent=2) + "\n", output)
+
+
+def _read_card(input_path: str | None) -> cards.Card | None:
+    """The card saved at `input_path` (or on stdin), or None (after printing why)."""
+    text = _read_text(input_path)
+    if text is None:
+        return None
+    try:
+        return cards.from_dict(json.loads(text))
+    except (ValueError, AttributeError) as exc:
+        where = input_path or "stdin"
+        print(f"error: {where} is not a saved card ({exc})", file=sys.stderr)
+        return None
 
 
 def _read_text(input_path: str | None) -> str | None:
@@ -681,9 +739,11 @@ def _read_text(input_path: str | None) -> str | None:
         return None
 
 
-def _messages(text: str, limit: int = telegram_format.MAX_LENGTH) -> list[str] | None:
+def _messages(card: cards.Card | None, limit: int = telegram_html.MAX_LENGTH) -> list[str] | None:
+    if card is None:
+        return None
     try:
-        return telegram_format.messages(text, limit)
+        return cards.render(card, limit)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
@@ -691,19 +751,19 @@ def _messages(text: str, limit: int = telegram_format.MAX_LENGTH) -> list[str] |
 
 def _print_messages(chunks: list[str]) -> None:
     for i, chunk in enumerate(chunks, 1):
-        size = telegram_format.length(chunk)
+        size = telegram_html.length(chunk)
         print(f"--- message {i}/{len(chunks)}, {size} chars ---")
         print(chunk)
 
 
 def _cmd_format(input_path: str | None, limit: int) -> int:
-    if limit < 2:
-        print("error: --limit must be at least 2", file=sys.stderr)
+    if limit < 16:
+        print("error: --limit must be at least 16", file=sys.stderr)
         return 2
-    text = _read_text(input_path)
-    if text is None:
+    card = _read_card(input_path)
+    if card is None:
         return 1
-    chunks = _messages(text, limit)
+    chunks = _messages(card, limit)
     if chunks is None:
         return 1
     _print_messages(chunks)
@@ -715,10 +775,10 @@ def _telegram_client() -> httpx.Client:
 
 
 def _cmd_send(input_path: str | None, dry_run: bool, env_file: str) -> int:
-    text = _read_text(input_path)
-    if text is None:
+    card = _read_card(input_path)
+    if card is None:
         return 1
-    chunks = _messages(text)
+    chunks = _messages(card)
     if chunks is None:
         return 1
     if dry_run:
@@ -733,6 +793,32 @@ def _cmd_send(input_path: str | None, dry_run: bool, env_file: str) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"sent {len(chunks)} message(s)", file=sys.stderr)
+    return 0
+
+
+def _cmd_preview(kind: str, send: bool, env_file: str) -> int:
+    """A sample of `kind`, printed, or (with `send`) sent to the admin chat only."""
+    try:
+        actions = preview.replies(kind)
+    except (ValueError, cards.CardError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not send:
+        for action in actions:
+            _print_action(action)
+        print(f"{len(actions)} message(s); --send sends them to the admin chat", file=sys.stderr)
+        return 0
+    try:
+        # The admin is the configured chat until there are several users (F32, F33).
+        credentials = telegram_send.load_credentials(env_file=env_file)
+        with _telegram_client() as client:
+            api = bot.BotApi(credentials, client)
+            for action in actions:
+                api.send(action)
+    except (telegram_send.SendError, bot.BotError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"sent {len(actions)} sample message(s) to the admin chat", file=sys.stderr)
     return 0
 
 
@@ -813,12 +899,13 @@ def _digest_for(
         )
         return None
     _warn_missing(document)
-    try:
-        text = digest.generate(document, digest.ClaudeCli(model=model), language)
-    except digest.GenerationError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return None
-    return _messages(text)
+    card = _card(
+        cards.DIGEST,
+        lambda: digest.generate(document, digest.ClaudeCli(model=model), language),
+        document,
+        language,
+    )
+    return _messages(card)
 
 
 @dataclass(frozen=True)
@@ -934,16 +1021,20 @@ def _summary_for(
         _now(), decision.since, decision.next_race, items, favourites, failed
     )
     _warn_missing(document)
-    try:
-        text = digest.generate_summary(
+    return _messages(_summary_card(document, model, language))
+
+
+def _summary_card(document: dict, model: str | None, language: str) -> cards.Card | None:
+    return _card(
+        cards.SUMMARY,
+        lambda: digest.generate_summary(
             document,
             digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT),
             language,
-        )
-    except digest.GenerationError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return None
-    return _messages(text)
+        ),
+        document,
+        language,
+    )
 
 
 def _classification(race: schedule.Race) -> list[form.QualifyingResult] | None:
@@ -970,16 +1061,17 @@ def _qualifying_document(
     return document
 
 
-def _qualifying_text(document: dict, model: str | None, language: str) -> str | None:
-    try:
-        return digest.generate_after_qualifying(
+def _qualifying_card(document: dict, model: str | None, language: str) -> cards.Card | None:
+    return _card(
+        cards.QUALI,
+        lambda: digest.generate_after_qualifying(
             document,
             digest.ClaudeCli(model=model, system_prompt=digest.QUALIFYING_SYSTEM_PROMPT),
             language,
-        )
-    except digest.GenerationError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return None
+        ),
+        document,
+        language,
+    )
 
 
 def _send_or_print(
@@ -1088,8 +1180,7 @@ def _run_due(
                 if not results:
                     return 0 if results is not None else 1
                 document = _qualifying_document(quali.race, results, favourites)
-                text = _qualifying_text(document, model, language)
-                chunks = None if text is None else _messages(text)
+                chunks = _messages(_qualifying_card(document, model, language))
                 return _send_or_print(chunks, credentials, _qualifying_target(log, quali.race))
             summary = _decide_summary(races, log)
             if summary is None:
@@ -1146,16 +1237,10 @@ def _cmd_summary(
         _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE, language), output)
         return 0
     _warn_missing(document)
-    try:
-        text = digest.generate_summary(
-            document,
-            digest.ClaudeCli(model=model, system_prompt=digest.SUMMARY_SYSTEM_PROMPT),
-            language,
-        )
-    except digest.GenerationError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    card = _summary_card(document, model, language)
+    if card is None:
         return 1
-    _write(text + "\n", output)
+    _write_card(card, output)
     return 0
 
 
@@ -1189,10 +1274,10 @@ def _cmd_quali(
     if prompt_only:
         _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE, language), output)
         return 0
-    text = _qualifying_text(document, model, language)
-    if text is None:
+    card = _qualifying_card(document, model, language)
+    if card is None:
         return 1
-    _write(text + "\n", output)
+    _write_card(card, output)
     return 0
 
 
@@ -1649,6 +1734,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_format(args.input, args.limit)
     if args.command == "send":
         return _cmd_send(args.input, args.dry_run, args.env_file)
+    if args.command == "preview":
+        return _cmd_preview(args.kind, args.send, args.env_file)
     if args.command == "due":
         return _cmd_due(args.days_before, args.state)
     if args.command == "run":

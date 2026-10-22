@@ -1,0 +1,236 @@
+{
+  "kind": "digest",
+  "language": "ru",
+  "title": "Гран-при США (образец)",
+  "subtitle": "23–25.10.2026",
+  "schedule": [
+    [
+      "Пт 23.10 19:30",
+      "Практика 1"
+    ],
+    [
+      "Пт 23.10 23:30",
+      "Спринт-квалификация"
+    ],
+    [
+      "Сб 24.10 19:00",
+      "Спринт"
+    ],
+    [
+      "Сб 24.10 23:00",
+      "Квалификация"
+    ],
+    [
+      "Вс 25.10 21:00",
+      "Гонка"
+    ]
+  ],
+  "sections": [
+    {
+      "id": "race",
+      "heading": "Уикенд",
+      "items": [
+        {
+          "text": "Это **спринт-уикенд**: одна практика, очки дают и в субботу.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/18.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "standings",
+      "heading": "Зачёт",
+      "items": [
+        {
+          "text": "Лидер чемпионата набрал **+18 очков** за прошлый этап и оторвался на **42 очка**.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/17/driverstandings.json"
+            }
+          ]
+        },
+        {
+          "text": "Рассел поднялся на **P4** (+1 позиция).",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/17/driverstandings.json"
+            }
+          ]
+        },
+        {
+          "text": "Пример длинной новости: команда привозит новый пол и переднее антикрыло; в образце текст специально растянут, чтобы показать, как длинный раздел сворачивается в цитату, которую можно раскрыть.",
+          "sources": [
+            {
+              "name": "Motorsport.com",
+              "url": "https://example.com/sample/upgrade"
+            }
+          ]
+        },
+        {
+          "text": "Стюарды пересмотрели правило о штрафах за превышение пределов трассы — с этого этапа предупреждения считаются по-новому.",
+          "sources": [
+            {
+              "name": "BBC Sport",
+              "url": "https://example.com/sample/track-limits"
+            }
+          ]
+        },
+        {
+          "text": "Пример новости о регламенте 2027 года: команды согласовали изменения в правилах использования шин.",
+          "sources": [
+            {
+              "name": "The Race",
+              "url": "https://example.com/sample/regs-2027"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "team:mclaren",
+      "heading": "McLaren",
+      "items": [
+        {
+          "text": "Последние 5 гонок: **P2, P1, P3, P2, P5** у лучшего пилота.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/constructors/mclaren/results.json"
+            }
+          ]
+        },
+        {
+          "text": "Медианный темп на длинных отрезках — **+0.12 с** к лидеру.",
+          "sources": [
+            {
+              "name": "OpenF1",
+              "url": "https://api.openf1.org/v1/laps?session_key=11388"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "team:haas",
+      "heading": "Haas",
+      "items": [
+        {
+          "text": "Очки в **3 из 5** последних гонок, лучший финиш — **P7**.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/constructors/haas/results.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drivers",
+      "heading": "Гонщики",
+      "items": [
+        {
+          "text": "Russell: **P4, P3, P6** в трёх последних гонках.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/drivers/russell/results.json"
+            }
+          ]
+        },
+        {
+          "text": "Ocon **6–3** Bearman в квалификациях, **5–4** в гонках.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/constructors/haas/qualifying.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stories",
+      "heading": "Твои сюжеты",
+      "items": [
+        {
+          "text": "«Bearman в Ferrari в 2028?» — 🟡 слух, нового с прошлого дайджеста нет.",
+          "unknown": true
+        },
+        {
+          "text": "Почему важно сейчас: дуэль с напарником — **6–3** в квалификациях не в пользу Bearman.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/constructors/haas/qualifying.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "track",
+      "heading": "Трасса",
+      "items": [
+        {
+          "text": "Характер трассы в собранных данных не описан — неизвестно.",
+          "unknown": true
+        },
+        {
+          "text": "McLaren здесь в 2025: **P1** и **P3**.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2025/19/results.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "weather",
+      "heading": "Погода",
+      "items": [
+        {
+          "text": "Пятница сухо, **27 °C**; в воскресенье вероятность дождя **40%**.",
+          "sources": [
+            {
+              "name": "Open-Meteo",
+              "url": "https://api.open-meteo.com/v1/forecast?latitude=30.13&longitude=-97.64"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "expect",
+      "heading": "Чего ждать",
+      "items": [
+        {
+          "text": "McLaren — фаворит квалификации: темп на длинных отрезках лучший в поле (**+0.12 с**).",
+          "sources": [
+            {
+              "name": "OpenF1",
+              "url": "https://api.openf1.org/v1/laps?session_key=11388"
+            }
+          ]
+        },
+        {
+          "text": "Haas борется за очки: **3 из 5** последних гонок в топ-10.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2026/constructors/haas/results.json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

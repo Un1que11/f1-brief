@@ -171,7 +171,7 @@ def test_start_after_the_last_race(ui: Bot) -> None:
     [
         ("menu:stories", "Сюжетов пока нет"),
         ("menu:archive", "Архив пуст"),
-        ("menu:next", "🏁 Этап 18: United States Grand Prix (2026)"),
+        ("menu:next", "🏁 <b>Этап 18: United States Grand Prix (2026)</b>"),
         ("menu:favs", "⭐ Избранное"),
         ("menu:help", "/stories — сюжеты"),
     ],
@@ -214,7 +214,9 @@ def test_a_story_button_opens_its_timeline(store: StoryStore, ui: Bot) -> None:
     story = seed(store)
     actions = ui.handle(press(f"story:{story.id}"), NOW)
     assert actions[0] == Answer("cb1")
-    assert text_of(actions).startswith(f"#{story.id} Бирман в Ferrari в 2028?\nСтатус: слух")
+    assert text_of(actions).startswith(
+        f"📰 <b>#{story.id} Бирман в Ferrari в 2028?</b>\nСтатус: 🟡 слух"
+    )
     assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}"), BACK]
 
 
@@ -272,12 +274,13 @@ def test_next_shows_the_round_the_sessions_in_warsaw_and_the_digest(ui: Bot) -> 
     actions = ui.handle(message("/next"), NOW)
 
     lines = text_of(actions).splitlines()
+    # The schedule is an aligned <pre> block (F41).
     assert lines[:5] == [
-        "🏁 Этап 18: United States Grand Prix (2026)",
+        "🏁 <b>Этап 18: United States Grand Prix (2026)</b>",
         "Circuit of the Americas, Austin, USA",
         "",
-        "Расписание (время варшавское):",
-        "Пт 23.10 19:30 — Практика 1",
+        "Расписание, время варшавское:",
+        "<pre>Пт 23.10 19:30  Практика 1",
     ]
     assert lines[-3:] == [
         "",
@@ -290,12 +293,12 @@ def test_next_shows_the_round_the_sessions_in_warsaw_and_the_digest(ui: Bot) -> 
 def test_next_names_every_session_in_russian_with_the_dst_change(ui: Bot) -> None:
     sessions = text_of(ui.handle(message("/next"), NOW)).splitlines()[4:9]
     assert sessions == [
-        "Пт 23.10 19:30 — Практика 1",
-        "Пт 23.10 23:00 — Практика 2",
-        "Сб 24.10 19:30 — Практика 3",
-        "Сб 24.10 23:00 — Квалификация",
+        "<pre>Пт 23.10 19:30  Практика 1",
+        "Пт 23.10 23:00  Практика 2",
+        "Сб 24.10 19:30  Практика 3",
+        "Сб 24.10 23:00  Квалификация",
         # Warsaw leaves summer time on 25.10: the race is at 20:00 UTC, 21:00 Warsaw.
-        "Вс 25.10 21:00 — Гонка",
+        "Вс 25.10 21:00  Гонка</pre>",
     ]
 
 
@@ -324,7 +327,8 @@ def test_next_with_a_session_time_to_be_confirmed(ui: Bot, races: list[schedule.
     tbc = schedule.Session(fp1.kind, fp1.date, None)
     ui.calendar = lambda: [type(race)(**{**vars(race), "sessions": (tbc, *race.sessions[1:])})]
     text = text_of(ui.handle(message("/next"), NOW))
-    assert "Пт 23.10, время уточняется — Практика 1" in text
+    assert "<pre>Пт 23.10 --:--  Практика 1\n" in text
+    assert "</pre>\n--:-- — время уточняется" in text
 
 
 def test_next_without_the_calendar_or_races(ui: Bot) -> None:
@@ -568,7 +572,7 @@ def test_dry_run_start_next_and_removal_keep_the_config(
     out, err = capsys.readouterr()
     assert "Следующий дайджест придёт Ср 21.10 00:00 по Варшаве" in out
     assert "[📰 Сюжеты] [🗂 Архив]" in out
-    assert "🏁 Этап 18: United States Grand Prix (2026)" in out
+    assert "🏁 <b>Этап 18: United States Grand Prix (2026)</b>" in out
     assert "Убрал из избранного: Haas." in out
     assert "would remove haas" in err
     assert (cli_dir / "config.toml").read_text(encoding="utf-8") == before
