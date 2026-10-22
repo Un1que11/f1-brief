@@ -343,15 +343,18 @@ def _with_empty_list(text: str, kind: str) -> str:
 
 
 def _without_empty_list(text: str, kind: str) -> str:
-    """`text` without the `<kind> = []` line of its `[favourites]` table, so that
-    `[[favourites.<kind>]]` blocks can be appended (TOML does not allow both)."""
+    """`text` without the `<kind> = []` of its `[favourites]` table, so that
+    `[[favourites.<kind>]]` blocks can be appended (TOML does not allow both). A comment on
+    that line stays as a line of its own. Only the one-line form is found: an empty list
+    written over several lines is left alone, and the parse check then refuses the edit."""
     lines = text.split("\n")
     in_favourites = False
     for n, line in enumerate(lines):
         if _TABLE_HEADER.match(line):
             in_favourites = bool(_FAVOURITES_HEADER.fullmatch(line))
         elif in_favourites and (match := _EMPTY_LIST.fullmatch(line)) and match.group(1) == kind:
-            return "\n".join(lines[:n] + lines[n + 1 :])
+            comment = [match.group(2)] if match.group(2) else []
+            return "\n".join(lines[:n] + comment + lines[n + 1 :])
     return text
 
 

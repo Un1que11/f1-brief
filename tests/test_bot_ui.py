@@ -702,6 +702,21 @@ def test_add_favourites_after_emptying_a_list_of_a_missing_file(tmp_path: Path) 
     assert config.load(path) == result
 
 
+def test_add_favourites_to_a_hand_written_empty_list_keeps_its_comment(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[favourites] # mine\n"
+        "teams = []  # none for now\n"
+        'drivers = [{ id = "ocon", name = "Ocon" }]\n',
+        encoding="utf-8",
+    )
+    result = config.add_favourites(path, teams=[config.Favourite("haas", "Haas")])
+    assert result.favourites.team_ids == ("haas",)
+    assert result.favourites.driver_ids == ("ocon",)
+    assert config.load(path) == result
+    assert "# none for now" in path.read_text(encoding="utf-8")
+
+
 def test_empty_both_lists(tmp_path: Path) -> None:
     # The second emptied list goes into the same [favourites] table, not a second one.
     path = tmp_path / "config.toml"
