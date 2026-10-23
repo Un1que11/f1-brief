@@ -46,9 +46,15 @@ def followed_stories(path: Path) -> dict[str, Any]:
             StoryStatus.RUMOR,
             [Entity(EntityKind.DRIVER, "bearman")],
             Update(
-                "Synthetic seat headline", "https://example.com/seat", "Example News", "Да.", NOW
+                "Synthetic seat headline",
+                "https://example.com/seat",
+                "Example News",
+                "Да.",
+                NOW,
+                "ru",
             ),
             NOW,
+            language="ru",
         )
         store.follow(story.id, NOW)
         return facts.stories_facts(store, NOW, True, DEFAULT_FAVOURITES)

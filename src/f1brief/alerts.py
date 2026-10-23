@@ -91,12 +91,12 @@ def plan(store: StoryStore, now: datetime, max_per_day: int = MAX_PER_DAY) -> Pl
 
 def text(alert: Alert) -> str:
     story = alert.story
-    lines = [f"Новое в сюжете #{story.id} «{story.title_ru}» ({STATUS_RU[story.status]})"]
+    lines = [f"Новое в сюжете #{story.id} «{story.title}» ({STATUS_RU[story.status]})"]
     for entry in alert.updates:
         update = entry.update
         lines += [
             "",
-            update.what_changed_ru,
+            update.what_changed,
             *status_line(entry),
             f"{update.headline} ({update.source})",
             update.url,

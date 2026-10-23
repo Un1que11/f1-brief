@@ -40,7 +40,7 @@ published = 2026-08-16T12:00:00Z
 BEARMAN_FERRARI = new(
     FIRST,
     slug="bearman-ferrari-2028",
-    title_ru="Бирман в Ferrari в 2028 вместо Хэмилтона?",
+    title="Бирман в Ferrari в 2028 вместо Хэмилтона?",
     entities=[
         {"kind": "driver", "ref": "bearman"},
         {"kind": "team", "ref": "haas"},
@@ -72,7 +72,7 @@ def test_the_checked_in_seeds_are_the_sources_from_the_backlog() -> None:
 def test_the_checked_in_seeds_say_nothing_about_the_story() -> None:
     """The story comes from the model: the file carries only what a feed would."""
     text = REPO_SEEDS.read_text(encoding="utf-8")
-    for key in ("slug", "title_ru", "summary_ru", "status", "entities"):
+    for key in ("slug", "status", "entities", "what_changed"):
         assert f"{key} =" not in text
 
 
@@ -172,8 +172,9 @@ def test_without_updates_lists_the_urls_no_story_has(tmp_path: Path) -> None:
             "Синтетика.",
             StoryStatus.RUMOR,
             [],
-            Update("H", FIRST, "Example News", "Синтетика.", None),
+            Update("H", FIRST, "Example News", "Синтетика.", None, "ru"),
             NOW,
+            language="ru",
         )
         assert store.without_updates([SECOND, FIRST]) == [SECOND]
 
@@ -287,8 +288,9 @@ def test_a_seed_that_joins_a_stored_story_follows_it(run: Any, capsys: Any) -> N
             "Синтетика.",
             StoryStatus.RUMOR,
             [Entity(EntityKind.DRIVER, "bearman")],
-            Update("H", "https://example.com/earlier", "Example News", "Синтетика.", None),
+            Update("H", "https://example.com/earlier", "Example News", "Синтетика.", None, "ru"),
             NOW - timedelta(days=30),
+            language="ru",
         )
     run.model.text = Model(attach(FIRST), attach(SECOND)).text
 

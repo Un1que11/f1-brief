@@ -212,7 +212,7 @@ def _line(story: Story, numbered: bool = True) -> str:
     template = texts.STORY_LINE_NUMBERED if numbered else texts.STORY_LINE
     return template.format(
         id=story.id,
-        title=story.title_ru,
+        title=story.title,
         status=STATUS_RU[story.status],
         date=texts.date(story.last_update_at),
     )
@@ -391,7 +391,7 @@ class Bot:
 
     @staticmethod
     def _open_button(story: Story, icon: str = "") -> Button:
-        title = _short(story.title_ru)
+        title = _short(story.title)
         return Button(f"{icon} {title}" if icon else title, f"{STORY}:{story.id}")
 
     def _archive(self, now: datetime) -> list[Action]:
@@ -413,12 +413,12 @@ class Bot:
     def _timeline(self, story: Story, now: datetime) -> list[Action]:
         following = self._following(story.id)
         lines = [
-            texts.STORY_TITLE.format(id=story.id, title=story.title_ru),
+            texts.STORY_TITLE.format(id=story.id, title=story.title),
             texts.STORY_STATUS.format(
                 status=STATUS_RU[story.status],
                 following=texts.STORY_FOLLOWED if following else texts.STORY_NOT_FOLLOWED,
             ),
-            story.summary_ru,
+            story.summary,
             "",
             texts.TIMELINE,
         ]
@@ -430,7 +430,7 @@ class Bot:
                 texts.TIMELINE_ENTRY.format(
                     date=when, headline=update.headline, source=update.source
                 ),
-                update.what_changed_ru,
+                update.what_changed,
                 *status_line(entry),
                 update.url,
             ]
@@ -438,12 +438,12 @@ class Bot:
 
     def _follow(self, story: Story, now: datetime) -> list[Action]:
         template = texts.FOLLOWED if self.store.follow(story.id, now) else texts.ALREADY_FOLLOWED
-        text = template.format(id=story.id, title=story.title_ru)
+        text = template.format(id=story.id, title=story.title)
         return _replies(text, self._story_buttons(story, following=True))
 
     def _unfollow(self, story: Story, now: datetime) -> list[Action]:
         if self.store.unfollow(story.id, now):
-            text = texts.UNFOLLOWED.format(id=story.id, title=story.title_ru)
+            text = texts.UNFOLLOWED.format(id=story.id, title=story.title)
         else:
             text = texts.NOT_FOLLOWED.format(id=story.id)
         return _replies(text, self._story_buttons(story, following=False))
@@ -456,7 +456,7 @@ class Bot:
         if not self.store.mute(story.id, until):
             return _replies(texts.MUTE_NOT_FOLLOWED.format(id=story.id))
         return _replies(
-            texts.MUTED.format(id=story.id, title=story.title_ru, until=texts.date_time(until)),
+            texts.MUTED.format(id=story.id, title=story.title, until=texts.date_time(until)),
             self._story_buttons(story, following=True),
         )
 

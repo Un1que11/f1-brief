@@ -37,6 +37,7 @@ from f1brief import (
     stories,
     story_detection,
     story_seeds,
+    story_texts,
     telegram_format,
     telegram_send,
     track_history,
@@ -586,24 +587,47 @@ def _cmd_weather() -> int:
     return 0
 
 
-def _stories_reader(state: str, now: datetime, favourites: config.Favourites) -> Callable[[], dict]:
+def _stories_reader(
+    state: str,
+    now: datetime,
+    favourites: config.Favourites,
+    language: str,
+    model: digest.TextModel | None,
+) -> Callable[[], dict]:
     """Builds the facts' `stories` section from the state file: the followed stories'
-    updates since the last digest."""
+    updates since the last digest, their texts in `language` (generated with `model` and
+    cached when missing; without a model, cached or as stored)."""
 
     def read() -> dict:
         with send_log.SendLog(state) as log:
             last_digest = log.last_digest_at(now)
         with stories.StoryStore(state) as store:
+
+            def texts(
+                story: stories.Story, updates: list[stories.StoryUpdate]
+            ) -> story_texts.Localized:
+                local, error = story_texts.localize(store, story, updates, language, model, now)
+                if error is not None:
+                    print(f"warning: {error}; using the stored texts", file=sys.stderr)
+                return local
+
             since = facts.stories_since(last_digest, now)
-            return facts.stories_facts(store, since, last_digest is not None, favourites)
+            return facts.stories_facts(store, since, last_digest is not None, favourites, texts)
 
     return read
 
 
-def _collect_facts(favourites: config.Favourites, state: str) -> dict | None:
-    """The facts document, or None (after printing why) when no section could be collected."""
+def _collect_facts(
+    favourites: config.Favourites,
+    state: str,
+    language: str,
+    story_model: digest.TextModel | None = None,
+) -> dict | None:
+    """The facts document, or None (after printing why) when no section could be collected.
+    Story texts missing in `language` are generated with `story_model` (none without it)."""
     now = _now()
-    document = facts.collect(now, favourites, stories=_stories_reader(state, now, favourites))
+    reader = _stories_reader(state, now, favourites, language, story_model)
+    document = facts.collect(now, favourites, stories=reader)
     if not any(data is not None for data in document["sections"].values()):
         for gap in document["missing"]:
             print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
@@ -624,8 +648,8 @@ def _write(text: str, output: str | None) -> None:
         sys.stdout.write(text)
 
 
-def _cmd_facts(output: str | None, state: str, favourites: config.Favourites) -> int:
-    document = _collect_facts(favourites, state)
+def _cmd_facts(output: str | None, state: str, favourites: config.Favourites, language: str) -> int:
+    document = _collect_facts(favourites, state, language)
     if document is None:
         return 1
     _write(json.dumps(document, ensure_ascii=False, indent=2) + "\n", output)
@@ -653,7 +677,9 @@ def _cmd_digest(
             print(f"error: {facts_path} is not a `facts` document", file=sys.stderr)
             return 1
     else:
-        document = _collect_facts(favourites, state)
+        # With --prompt-only nothing runs claude: story texts are cached or as stored.
+        story_model = None if prompt_only else story_texts.default_model(model)
+        document = _collect_facts(favourites, state, language, story_model)
         if document is None:
             return 1
     if prompt_only:
@@ -803,7 +829,7 @@ def _digest_for(
     language: str,
 ) -> list[str] | None:
     """The digest messages for `race`, or None (after printing why) when they cannot be made."""
-    document = _collect_facts(favourites, state)
+    document = _collect_facts(favourites, state, language, story_texts.default_model(model))
     if document is None:
         return None
     about = document["sections"]["race"]
@@ -1618,7 +1644,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "weather":
         return _cmd_weather()
     if args.command == "facts":
-        return _cmd_facts(args.output, args.state, favourites)
+        return _cmd_facts(args.output, args.state, favourites, settings.language)
     if args.command == "digest":
         return _cmd_digest(
             args.facts,

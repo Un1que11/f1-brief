@@ -20,7 +20,8 @@ def update(n: int, published: datetime | None = datetime(2026, 9, 30, 18, tzinfo
         headline=f"Synthetic headline {n}",
         url=f"https://example.com/story-{n}",
         source="Example News",
-        what_changed_ru=f"Синтетика: изменение {n}.",
+        what_changed=f"Синтетика: изменение {n}.",
+        language="ru",
         published_at=published,
     )
 
@@ -48,6 +49,7 @@ def seed(
         entities or [],
         update(n, published),
         NOW - timedelta(days=10),
+        language="ru",
     )
 
 
@@ -171,10 +173,12 @@ def test_every_stored_text_is_escaped(store: StoryStore) -> None:
             headline='"><img src=x onerror=alert(1)>',
             url='https://example.com/a?b=1&c="2"',
             source="<i>Source</i>",
-            what_changed_ru="1 < 2",
+            what_changed="1 < 2",
+            language="ru",
             published_at=None,
         ),
         NOW,
+        language="ru",
     )
 
     page = archive_page.build(store, NOW)
