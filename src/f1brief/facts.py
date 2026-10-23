@@ -28,7 +28,8 @@ from f1brief import (
 from f1brief.config import Favourite, Favourites
 from f1brief.schedule import WARSAW, Race
 from f1brief.send_log import StateError
-from f1brief.stories import EntityKind, StoryError, StoryStore, StoryUpdate
+from f1brief.stories import EntityKind, Story, StoryError, StoryStore, StoryUpdate
+from f1brief.story_texts import Localized
 
 # 2 (F20): favourites from the config (several teams), `team_form.teams`, shared teammate
 # head-to-heads in `drivers`, `favourite_teams_points` in `track`, news `future`.
@@ -426,25 +427,47 @@ def stories_since(last_digest: datetime | None, now: datetime) -> datetime:
     return last_digest if last_digest is not None else now - timedelta(days=STORIES_DAYS)
 
 
-def _story_update(entry: StoryUpdate) -> dict[str, Any]:
+# Gives a story's texts in the digest's language (see `story_texts.localize`).
+StoryTexts = Callable[[Story, list[StoryUpdate]], Localized]
+
+
+def _stored_texts(story: Story, updates: list[StoryUpdate]) -> Localized:
+    return Localized(
+        title=story.title,
+        summary=story.summary,
+        language=story.language,
+        what_changed={u.id: u.update.what_changed for u in updates},
+        update_languages={u.id: u.update.language for u in updates},
+    )
+
+
+def _story_update(entry: StoryUpdate, texts: Localized) -> dict[str, Any]:
     update = entry.update
     return {
         # null when the article has no date
         "published": _time(update.published_at),
         "recorded": _time(entry.recorded_at),
         "headline": update.headline,
-        "what_changed": update.what_changed_ru,
+        "what_changed": texts.what_changed[entry.id],
+        "language": texts.update_languages[entry.id],  # of `what_changed`
         "source": update.source,
         "link": update.url,
     }
 
 
 def stories_facts(
-    store: StoryStore, since: datetime, last_digest: bool, favourites: Favourites
+    store: StoryStore,
+    since: datetime,
+    last_digest: bool,
+    favourites: Favourites,
+    texts: StoryTexts | None = None,
 ) -> dict[str, Any]:
     """Every story followed now, with its updates recorded at or after `since` (each with
     its source and link); `last_digest` says whether `since` is the last digest. Entities
-    that are favourites have their own entries in `drivers` / `team_form` under the same id."""
+    that are favourites have their own entries in `drivers` / `team_form` under the same id.
+    `texts` gives the titles, summaries and `what_changed` in the digest's language; without
+    it they are as stored. Each says the language it is in."""
+    texts = texts or _stored_texts
     favourite_ids = {
         EntityKind.DRIVER: set(favourites.driver_ids),
         EntityKind.TEAM: set(favourites.team_ids),
@@ -457,6 +480,7 @@ def stories_facts(
     for story in store.followed():
         subscription = store.subscription(story.id)
         updates = new.get(story.id, [])
+        local = texts(story, updates)
         for entry in updates:
             source = {"name": entry.update.source, "url": entry.update.url}
             if source not in sources:
@@ -464,8 +488,9 @@ def stories_facts(
         followed.append(
             {
                 "id": story.id,
-                "title": story.title_ru,
-                "summary": story.summary_ru,
+                "title": local.title,
+                "summary": local.summary,
+                "language": local.language,  # of the title and summary
                 # rumor | developing | confirmed | denied | resolved
                 "status": story.status.value,
                 "entities": [
@@ -479,7 +504,7 @@ def stories_facts(
                 "followed_since": _time(subscription.followed_at) if subscription else None,
                 "last_update_at": _time(story.last_update_at),
                 # oldest first; empty when nothing changed since `since`
-                "updates_since": [_story_update(u) for u in updates],
+                "updates_since": [_story_update(u, local) for u in updates],
             }
         )
     return {

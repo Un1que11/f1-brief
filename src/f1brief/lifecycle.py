@@ -68,7 +68,7 @@ def text(offer: Offer, now: datetime) -> str:
     last = story.last_update_at.astimezone(WARSAW).strftime("%d.%m.%Y")
     return "\n".join(
         [
-            f"Сюжет #{story.id} «{story.title_ru}» ({STATUS_RU[story.status]}): "
+            f"Сюжет #{story.id} «{story.title}» ({STATUS_RU[story.status]}): "
             f"нет новостей уже {days_ru((now - offer.quiet_since).days)}, "
             f"последнее обновление — {last}.",
             "Отписаться? Если хочешь следить дальше, ничего не нажимай: новости по нему "

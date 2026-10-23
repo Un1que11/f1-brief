@@ -26,7 +26,8 @@ def update(n: int, published: datetime | None = None) -> Update:
         headline=f"Synthetic headline {n}",
         url=f"https://example.com/story-{n}",
         source=f"Outlet {n % 2}",
-        what_changed_ru=f"Синтетика: изменение {n}.",
+        what_changed=f"Синтетика: изменение {n}.",
+        language="ru",
         published_at=published,
     )
 
@@ -51,6 +52,7 @@ def story(store: StoryStore, n: int, entities: list[Entity], recorded: datetime)
         entities,
         update(100 * n, recorded - timedelta(hours=2)),
         recorded,
+        language="ru",
     )
 
 
@@ -132,6 +134,7 @@ def test_only_updates_since_the_last_digest_with_their_sources(
             "recorded": "2026-10-04T10:00:00+02:00",
             "headline": "Synthetic headline 11",
             "what_changed": "Синтетика: изменение 11.",
+            "language": "ru",
             "source": "Outlet 1",
             "link": "https://example.com/story-11",
         },
@@ -140,6 +143,7 @@ def test_only_updates_since_the_last_digest_with_their_sources(
             "recorded": "2026-10-05T10:00:00+02:00",
             "headline": "Synthetic headline 12",
             "what_changed": "Синтетика: изменение 12.",
+            "language": "ru",
             "source": "Outlet 0",
             "link": "https://example.com/story-12",
         },

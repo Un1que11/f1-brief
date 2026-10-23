@@ -43,7 +43,8 @@ def update(n: int, published: datetime | None = datetime(2026, 9, 30, 18, tzinfo
         headline=f"Synthetic headline {n}",
         url=f"https://example.com/story-{n}",
         source="Example News",
-        what_changed_ru=f"Синтетика: изменение {n}.",
+        what_changed=f"Синтетика: изменение {n}.",
+        language="ru",
         published_at=published,
     )
 
@@ -64,6 +65,7 @@ def seed(
         BEARMAN_FERRARI if entities is None else entities,
         update(n),
         NOW - timedelta(days=10),
+        language="ru",
     )
 
 
