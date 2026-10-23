@@ -53,7 +53,8 @@ def update(n: int, published: datetime | None = LAST) -> Update:
         headline=f"Synthetic headline {n}",
         url=f"https://example.com/story-{n}",
         source="Example News",
-        what_changed_ru=f"Синтетика: изменение {n}.",
+        what_changed=f"Синтетика: изменение {n}.",
+        language="ru",
         published_at=published,
     )
 
@@ -79,6 +80,7 @@ def story(
         [Entity(EntityKind.DRIVER, "bearman")],
         update(100 * n),
         LAST,
+        language="ru",
     )
     if followed is not None:
         store.follow(created.id, followed)
@@ -181,6 +183,7 @@ def detection_seed(store: StoryStore, status: StoryStatus) -> Story:
         [Entity(EntityKind.DRIVER, "ocon")],
         update(1),
         MORNING,
+        language="ru",
     )
 
 

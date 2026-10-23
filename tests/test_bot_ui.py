@@ -682,6 +682,58 @@ def test_removing_the_last_entry_writes_an_empty_list(tmp_path: Path) -> None:
     assert config.load(path).favourites.driver_ids == ("russell", "ocon", "bearman")
 
 
+def test_add_favourites_after_a_list_was_emptied(tmp_path: Path) -> None:
+    # The remove button wrote `teams = []`; "Следить за …" must still add a team after that.
+    path = tmp_path / "config.toml"
+    path.write_text(CHECKED_IN_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    config.remove_favourite(path, "teams", "mclaren")
+    config.remove_favourite(path, "teams", "haas")
+    result = config.add_favourites(path, teams=[config.Favourite("ferrari", "Ferrari")])
+    assert result.favourites.team_ids == ("ferrari",)
+    assert result.favourites.driver_ids == ("russell", "ocon", "bearman")
+    assert config.load(path) == result
+    assert "# Favourites are lists" in path.read_text(encoding="utf-8")  # comments kept
+
+
+def test_add_favourites_after_emptying_a_list_of_a_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    config.remove_favourite(path, "drivers", "russell")
+    config.remove_favourite(path, "drivers", "ocon")
+    config.remove_favourite(path, "drivers", "bearman")
+    result = config.add_favourites(path, drivers=[config.Favourite("hamilton", "Lewis Hamilton")])
+    assert result.favourites.driver_ids == ("hamilton",)
+    assert result.favourites.teams == config.DEFAULT_FAVOURITES.teams
+    assert config.load(path) == result
+
+
+def test_add_favourites_to_a_hand_written_empty_list_keeps_its_comment(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[favourites] # mine\n"
+        "teams = []  # none for now\n"
+        'drivers = [{ id = "ocon", name = "Ocon" }]\n',
+        encoding="utf-8",
+    )
+    result = config.add_favourites(path, teams=[config.Favourite("haas", "Haas")])
+    assert result.favourites.team_ids == ("haas",)
+    assert result.favourites.driver_ids == ("ocon",)
+    assert config.load(path) == result
+    assert "# none for now" in path.read_text(encoding="utf-8")
+
+
+def test_empty_both_lists(tmp_path: Path) -> None:
+    # The second emptied list goes into the same [favourites] table, not a second one.
+    path = tmp_path / "config.toml"
+    path.write_text(CHECKED_IN_CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+    for kind, ids in (("teams", ("mclaren", "haas")), ("drivers", ("russell", "ocon", "bearman"))):
+        for fav_id in ids:
+            result = config.remove_favourite(path, kind, fav_id)
+    assert result.favourites.teams == ()
+    assert result.favourites.drivers == ()
+    assert config.load(path) == result
+    assert path.read_text(encoding="utf-8").count("[favourites]") == 1
+
+
 def test_remove_from_a_default_list_the_file_leaves_out(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('[digest]\nlanguage = "ru"\n', encoding="utf-8")

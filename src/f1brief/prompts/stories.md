@@ -16,14 +16,14 @@ the stories, starts a new one, or is not part of any storyline.
 2. Give exactly one decision for every item, and identify the item by its `url`, copied
    exactly. The url is the source of the story or update; a decision without it is discarded.
 3. `attach`: the item reports a development of one of the `stories`. Give that story's `slug`
-   as `story`, and in `what_changed_ru` say in one or two Russian sentences what this item adds
+   as `story`, and in `what_changed` say in one or two Russian sentences what this item adds
    to the story, using only the item's title and summary. Add `status` only when this item
    itself changes the story's status (see rule 6); otherwise leave it out.
 4. `new`: the item starts a storyline that is likely to develop over weeks or months and fits
    none of the `stories`. Give a `slug` (lowercase English words joined by `-`, not one of the
-   existing slugs), a short Russian `title_ru`, a Russian `summary_ru` of two or three sentences
+   existing slugs), a short Russian `title`, a Russian `summary` of two or three sentences
    saying what is at stake, a `status` (rule 6), the `entities` it is about, and
-   `what_changed_ru` for this first item, as in rule 3.
+   `what_changed` for this first item, as in rule 3.
 5. `ignore`: the item is a one-off (a race report, a single penalty with no follow-up, an
    opinion piece) or is about no storyline. When in doubt, ignore.
 6. Status: `rumor` when the item only reports what may happen (speculation, reports, links,
@@ -46,8 +46,8 @@ the stories, starts a new one, or is not part of any storyline.
 Only one JSON object, with no Markdown fences and no text before or after it:
 
 {"decisions": [
-  {"url": "...", "action": "attach", "story": "...", "what_changed_ru": "...", "status": "..."},
-  {"url": "...", "action": "new", "slug": "...", "title_ru": "...", "summary_ru": "...",
-   "status": "...", "entities": [{"kind": "...", "ref": "..."}], "what_changed_ru": "..."},
+  {"url": "...", "action": "attach", "story": "...", "what_changed": "...", "status": "..."},
+  {"url": "...", "action": "new", "slug": "...", "title": "...", "summary": "...",
+   "status": "...", "entities": [{"kind": "...", "ref": "..."}], "what_changed": "..."},
   {"url": "...", "action": "ignore"}
 ]}

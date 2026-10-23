@@ -37,7 +37,8 @@ def update(n: int) -> Update:
         headline=f"Synthetic headline {n}",
         url=f"https://example.com/story-{n}",
         source="Example News",
-        what_changed_ru=f"Синтетика: изменение {n}.",
+        what_changed=f"Синтетика: изменение {n}.",
+        language="ru",
         published_at=datetime(2026, 10, 1, tzinfo=UTC),
     )
 
@@ -63,6 +64,7 @@ def story(
         [Entity(EntityKind.DRIVER, "bearman")],
         update(100 * n),
         (followed or FOLLOWED) - timedelta(days=1),
+        language="ru",
     )
     if followed is not None:
         store.follow(created.id, followed)
@@ -226,11 +228,12 @@ def test_titles_headlines_and_links_are_escaped_for_telegram_html(store: StorySt
         [Entity(EntityKind.DRIVER, "bearman")],
         update(100),
         FOLLOWED - timedelta(days=1),
+        language="ru",
     )
     store.follow(odd.id, FOLLOWED)
     store.add_update(
         odd.id,
-        Update("H", "https://example.com/a?x=1&y=2", "A&B <News>", "1 < 2 & 3 > 2", MORNING),
+        Update("H", "https://example.com/a?x=1&y=2", "A&B <News>", "1 < 2 & 3 > 2", MORNING, "ru"),
         MORNING - timedelta(hours=1),
     )
     [text] = sent_texts(store, MORNING)
@@ -321,7 +324,8 @@ def test_a_long_alert_is_split_and_the_button_goes_on_the_last_part(store: Story
                 headline="Synthetic headline",
                 url=f"https://example.com/{n}",
                 source="Example News",
-                what_changed_ru="Синтетика. " * 100,
+                what_changed="Синтетика. " * 100,
+                language="ru",
                 published_at=None,
             ),
             recorded_at=MORNING,
@@ -364,6 +368,7 @@ def test_an_alert_partly_delivered_is_not_sent_again(store: StoryStore) -> None:
                 "Example News",
                 "Синтетика. " * 100,
                 None,
+                "ru",
             ),
             MORNING - timedelta(hours=1),
         )

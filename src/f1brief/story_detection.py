@@ -6,10 +6,10 @@ CLAUDE.md). Only the hot items that detection has not checked before go to `clau
 together with the stories that are not resolved. It answers with JSON, one decision per item:
 
     {"decisions": [
-        {"url": ..., "action": "attach", "story": <slug>, "what_changed_ru": ...,
+        {"url": ..., "action": "attach", "story": <slug>, "what_changed": ...,
          "status": ... (optional)},
-        {"url": ..., "action": "new", "slug": ..., "title_ru": ..., "summary_ru": ...,
-         "status": ..., "entities": [{"kind": ..., "ref": ...}], "what_changed_ru": ...},
+        {"url": ..., "action": "new", "slug": ..., "title": ..., "summary": ...,
+         "status": ..., "entities": [{"kind": ..., "ref": ...}], "what_changed": ...},
         {"url": ..., "action": "ignore"}
     ]}
 
@@ -20,7 +20,9 @@ then stored in one transaction (`apply`). A status only moves forward along the 
 lifecycle (`stories.can_move`): an attachment that would move it back keeps its sourced update
 but not the status, and a new story never starts resolved. The items answered are marked
 checked, rejected ones included, so a bad answer is reported once instead of being asked again
-every day; items the model left out stay unchecked and go to the next run.
+every day; items the model left out stay unchecked and go to the next run. The texts it writes
+(`title`, `summary`, `what_changed`) are in `stories.DETECTION_LANGUAGE`, and are stored with
+that language; other languages are generated from them on demand (`story_texts`).
 """
 
 import json
@@ -34,6 +36,7 @@ from f1brief import digest, news
 from f1brief.digest import TextModel
 from f1brief.news import NewsItem
 from f1brief.stories import (
+    DETECTION_LANGUAGE,
     INITIAL_STATUSES,
     Entity,
     EntityKind,
@@ -134,8 +137,8 @@ def build_document(store: StoryStore, items: Sequence[NewsItem]) -> dict[str, An
         stories.append(
             {
                 "slug": story.slug,
-                "title_ru": story.title_ru,
-                "summary_ru": story.summary_ru,
+                "title": story.title,
+                "summary": story.summary,
                 "status": story.status.value,
                 "entities": [
                     {"kind": e.kind.value, "ref": e.ref} for e in store.entities(story.id)
@@ -146,7 +149,7 @@ def build_document(store: StoryStore, items: Sequence[NewsItem]) -> dict[str, An
                         "published_at": (
                             u.update.published_at.isoformat() if u.update.published_at else None
                         ),
-                        "what_changed_ru": u.update.what_changed_ru,
+                        "what_changed": u.update.what_changed,
                     }
                     for u in recent
                 ],
@@ -188,8 +191,8 @@ def parse_answer(text: str) -> list[Any]:
 @dataclass(frozen=True)
 class NewStory:
     slug: str
-    title_ru: str
-    summary_ru: str
+    title: str
+    summary: str
     status: StoryStatus
     entities: tuple[Entity, ...]
     first_update: Update
@@ -244,8 +247,9 @@ def _update(decision: dict[str, Any], item: NewsItem) -> Update:
         headline=item.title,
         url=item.link,
         source=item.sources[0] if item.sources else "",
-        what_changed_ru=_text(decision, "what_changed_ru"),
+        what_changed=_text(decision, "what_changed"),
         published_at=item.published,
+        language=DETECTION_LANGUAGE,
     )
     check_update(update)
     return update
@@ -276,13 +280,20 @@ def _new_story(decision: dict[str, Any], item: NewsItem, taken: set[str]) -> New
         raise ValueError(f"a new story cannot start as {status.value}")
     story = NewStory(
         slug=slug,
-        title_ru=_text(decision, "title_ru"),
-        summary_ru=_text(decision, "summary_ru"),
+        title=_text(decision, "title"),
+        summary=_text(decision, "summary"),
         status=status,
         entities=_entities(decision.get("entities")),
         first_update=_update(decision, item),
     )
-    check_story(story.slug, story.title_ru, story.summary_ru, story.status, story.entities)
+    check_story(
+        story.slug,
+        story.title,
+        story.summary,
+        story.status,
+        story.entities,
+        DETECTION_LANGUAGE,
+    )
     return story
 
 
@@ -385,12 +396,13 @@ def apply(store: StoryStore, result: Plan, now: datetime) -> None:
         for new in result.new_stories:
             store.create(
                 new.slug,
-                new.title_ru,
-                new.summary_ru,
+                new.title,
+                new.summary,
                 new.status,
                 new.entities,
                 new.first_update,
                 now,
+                language=DETECTION_LANGUAGE,
             )
         for attachment in result.attachments:
             story = store.get_by_slug(attachment.story_slug)

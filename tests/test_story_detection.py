@@ -67,7 +67,8 @@ FIRST = Update(
     headline="Synthetic: Bearman linked to a 2028 Ferrari seat",
     url="https://example.com/bearman-ferrari",
     source="Example News",
-    what_changed_ru="Синтетика: первый слух.",
+    what_changed="Синтетика: первый слух.",
+    language="ru",
     published_at=datetime(2026, 9, 30, 18, tzinfo=UTC),
 )
 
@@ -81,12 +82,13 @@ def store(tmp_path: Path):
 def seed(store: StoryStore, slug: str = "bearman-ferrari-2028", **changes: Any):
     args = {
         "slug": slug,
-        "title_ru": "Бирман в Ferrari в 2028?",
-        "summary_ru": "Синтетическое описание.",
+        "title": "Бирман в Ferrari в 2028?",
+        "summary": "Синтетическое описание.",
         "status": StoryStatus.RUMOR,
         "entities": [Entity(EntityKind.DRIVER, "bearman"), Entity(EntityKind.TEAM, "haas")],
         "first_update": FIRST,
         "now": NOW,
+        "language": "ru",
     } | changes
     return store.create(**args)
 
@@ -96,11 +98,11 @@ def new(url: str, slug: str = "ocon-2027", **changes: Any) -> dict[str, Any]:
         "url": url,
         "action": "new",
         "slug": slug,
-        "title_ru": "Окон уйдёт после 2026?",
-        "summary_ru": "Синтетика: по слухам, место Окона под вопросом.",
+        "title": "Окон уйдёт после 2026?",
+        "summary": "Синтетика: по слухам, место Окона под вопросом.",
         "status": "rumor",
         "entities": [{"kind": "driver", "ref": "ocon"}, {"kind": "team", "ref": "haas"}],
-        "what_changed_ru": "Синтетика: первый слух.",
+        "what_changed": "Синтетика: первый слух.",
     } | changes
 
 
@@ -109,7 +111,7 @@ def attach(url: str, story: str = "bearman-ferrari-2028", **changes: Any) -> dic
         "url": url,
         "action": "attach",
         "story": story,
-        "what_changed_ru": "Синтетика: новые подробности.",
+        "what_changed": "Синтетика: новые подробности.",
     } | changes
 
 
@@ -185,7 +187,7 @@ def test_the_prompt_carries_only_the_new_items_and_the_open_stories(store: Story
         {
             "headline": FIRST.headline,
             "published_at": "2026-09-30T18:00:00+00:00",
-            "what_changed_ru": FIRST.what_changed_ru,
+            "what_changed": FIRST.what_changed,
         }
     ]
     assert sent["items"] == [
@@ -245,7 +247,8 @@ def test_new_attach_and_ignore_decisions_are_planned(store: StoryStore) -> None:
         headline=OCON_SEAT.title,
         url=OCON_SEAT.link,
         source="Example News",
-        what_changed_ru="Синтетика: первый слух.",
+        what_changed="Синтетика: первый слух.",
+        language="ru",
         published_at=OCON_SEAT.published,
     )
     [attachment] = result.attachments
@@ -301,8 +304,8 @@ def test_an_item_whose_link_is_not_http_is_rejected(store: StoryStore) -> None:
     [
         ({"slug": "Bad Slug"}, "slug"),
         ({"slug": "bearman-ferrari-2028"}, "taken"),
-        ({"title_ru": " "}, "title_ru"),
-        ({"what_changed_ru": None}, "what_changed_ru"),
+        ({"title": " "}, "title"),
+        ({"what_changed": None}, "what_changed"),
         ({"status": "gossip"}, "status"),
         ({"status": None}, "status"),
         ({"entities": []}, "entity"),
@@ -329,7 +332,7 @@ def test_an_invalid_new_story_is_rejected(
         ({"story": "no-such-story"}, "no open story"),
         ({"story": "closed"}, "no open story"),
         ({"status": "gossip"}, "status"),
-        ({"what_changed_ru": ""}, "what_changed_ru"),
+        ({"what_changed": ""}, "what_changed"),
     ],
 )
 def test_an_invalid_attachment_is_rejected(
@@ -405,7 +408,7 @@ def test_detect_then_apply_stores_stories_updates_and_checked_items(store: Story
 
 def test_every_stored_update_has_a_source_url(store: StoryStore) -> None:
     model = Model(
-        new(OCON_SEAT.link), {"action": "attach", "story": "ocon-2027", "what_changed_ru": "x"}
+        new(OCON_SEAT.link), {"action": "attach", "story": "ocon-2027", "what_changed": "x"}
     )
     sd.apply(store, sd.detect(store, [OCON_SEAT], model), NOW)
     rows = store._db.execute("SELECT url FROM story_updates").fetchall()

@@ -11,6 +11,12 @@ detection (F22) has already looked at, so each article is judged once. `story_al
 which updates of followed stories an alert (F24) has sent or skipped. `stale_offers` records
 the offers to unfollow a followed story that has gone quiet (F26).
 
+Texts are language-neutral (F31): a story's title and summary and an update's `what_changed`
+are stored as written, with the `language` they are written in (story detection writes them in
+`DETECTION_LANGUAGE`). Their other languages are generated on demand (see `story_texts`) and
+cached in `story_texts` / `update_texts`; a cached text is derived from the stored one and
+never replaces it, and the update's URL stays the one source of what it says.
+
 The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
 how many it has had in `schema_versions` (one row per part of the state file that migrates,
 so other tables may get their own later). A file migrated by a newer version is refused.
@@ -18,7 +24,7 @@ so other tables may get their own later). A file migrated by a newer version is 
 
 import re
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -113,11 +119,43 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
             PRIMARY KEY (story_id, quiet_since)
         )""",
     ),
+    (
+        # Language-neutral texts (F31): the columns lose their `_ru` suffix and record the
+        # language they are written in. Every row stored before this step was written in
+        # Russian by story detection, so they all get 'ru'.
+        "ALTER TABLE stories RENAME COLUMN title_ru TO title",
+        "ALTER TABLE stories RENAME COLUMN summary_ru TO summary",
+        "ALTER TABLE stories ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'",
+        "ALTER TABLE story_updates RENAME COLUMN what_changed_ru TO what_changed",
+        "ALTER TABLE story_updates ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'",
+        # The texts generated in other languages, cached: one row per story (or update) and
+        # language, never in the language the row itself is written in.
+        """CREATE TABLE story_texts (
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            language TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            PRIMARY KEY (story_id, language)
+        )""",
+        """CREATE TABLE update_texts (
+            update_id INTEGER NOT NULL REFERENCES story_updates (id) ON DELETE CASCADE,
+            language TEXT NOT NULL,
+            what_changed TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            PRIMARY KEY (update_id, language)
+        )""",
+    ),
 )
 
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_LANGUAGE = re.compile(r"[a-z]{2}")
+
+# The language story detection writes titles, summaries and `what_changed` in. The bot and
+# the alerts show them as they are (their UI is Russian until F30).
+DETECTION_LANGUAGE = "ru"
 
 
 class StoryError(Exception):
@@ -189,8 +227,9 @@ class Update:
     headline: str
     url: str
     source: str  # the outlet, e.g. "BBC Sport"
-    what_changed_ru: str
+    what_changed: str  # in `language`
     published_at: datetime | None  # None: the article has no date
+    language: str  # the language `what_changed` is written in, e.g. "ru"
 
 
 @dataclass(frozen=True)
@@ -210,12 +249,21 @@ class StoryUpdate:
 class Story:
     id: int
     slug: str
-    title_ru: str
-    summary_ru: str
+    title: str  # in `language`
+    summary: str  # in `language`
     status: StoryStatus
     created_at: datetime
     # When the latest update was published (or recorded, for an undated article).
     last_update_at: datetime
+    language: str  # the language the title and summary are written in
+
+
+@dataclass(frozen=True)
+class StoryText:
+    """A story's title and summary in one language."""
+
+    title: str
+    summary: str
 
 
 @dataclass(frozen=True)
@@ -245,6 +293,12 @@ def _check_text(name: str, value: str) -> None:
         raise ValueError(f"{name} must not be empty")
 
 
+def check_language(language: str) -> None:
+    """Raises ValueError for a language that is not a two-letter lowercase code."""
+    if not isinstance(language, str) or not _LANGUAGE.fullmatch(language):
+        raise ValueError(f"a language is a two-letter lowercase code, not {language!r}")
+
+
 def check_update(update: Update) -> None:
     """Raises ValueError for an update that cannot be stored: no http(s) source URL, or an
     empty headline, source or description."""
@@ -253,7 +307,8 @@ def check_update(update: Update) -> None:
         raise ValueError(f"an update needs the http(s) URL of its source, not {update.url!r}")
     _check_text("headline", update.headline)
     _check_text("source", update.source)
-    _check_text("what_changed_ru", update.what_changed_ru)
+    _check_text("what_changed", update.what_changed)
+    check_language(update.language)
     if update.published_at is not None and update.published_at.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
 
@@ -264,40 +319,59 @@ def _check_entity(entity: Entity) -> None:
 
 
 def check_story(
-    slug: str, title_ru: str, summary_ru: str, status: StoryStatus, entities: Sequence[Entity]
+    slug: str,
+    title: str,
+    summary: str,
+    status: StoryStatus,
+    entities: Sequence[Entity],
+    language: str,
 ) -> None:
     """Raises ValueError for a new story that cannot be stored: a slug that is not lowercase
-    words joined by '-', an empty title or summary, an unknown status or entity kind."""
+    words joined by '-', an empty title or summary, an unknown status, entity kind or
+    language."""
     if not _SLUG.fullmatch(slug):
         raise ValueError(f"a slug is lowercase words joined by '-', not {slug!r}")
-    _check_text("title_ru", title_ru)
-    _check_text("summary_ru", summary_ru)
+    _check_text("title", title)
+    _check_text("summary", summary)
+    check_language(language)
     StoryStatus(status)
     for entity in entities:
         _check_entity(entity)
 
 
-_STORY_COLUMNS = "id, slug, title_ru, summary_ru, status, created_at, last_update_at"
+_STORY_COLUMNS = "id, slug, title, summary, status, created_at, last_update_at, language"
 _UPDATE_COLUMNS = (
-    "id, story_id, headline, url, source, what_changed_ru, published_at, recorded_at, status"
+    "id, story_id, headline, url, source, what_changed, published_at, recorded_at, status, language"
 )
 
 
 def _story(row: tuple) -> Story:
-    id_, slug, title_ru, summary_ru, status, created_at, last_update_at = row
+    id_, slug, title, summary, status, created_at, last_update_at, language = row
     return Story(
         id=id_,
         slug=slug,
-        title_ru=title_ru,
-        summary_ru=summary_ru,
+        title=title,
+        summary=summary,
         status=StoryStatus(status),
         created_at=datetime.fromisoformat(created_at),
         last_update_at=datetime.fromisoformat(last_update_at),
+        language=language,
     )
 
 
 def _story_update(row: tuple) -> StoryUpdate:
-    id_, story_id, headline, url, source, what_changed_ru, published_at, recorded_at, status = row
+    (
+        id_,
+        story_id,
+        headline,
+        url,
+        source,
+        what_changed,
+        published_at,
+        recorded_at,
+        status,
+        language,
+    ) = row
     return StoryUpdate(
         id=id_,
         story_id=story_id,
@@ -305,8 +379,9 @@ def _story_update(row: tuple) -> StoryUpdate:
             headline=headline,
             url=url,
             source=source,
-            what_changed_ru=what_changed_ru,
+            what_changed=what_changed,
             published_at=_moment(published_at),
+            language=language,
         ),
         recorded_at=datetime.fromisoformat(recorded_at),
         status=StoryStatus(status) if status else None,
@@ -399,16 +474,19 @@ class StoryStore:
     def create(
         self,
         slug: str,
-        title_ru: str,
-        summary_ru: str,
+        title: str,
+        summary: str,
         status: StoryStatus,
         entities: Sequence[Entity],
         first_update: Update,
         now: datetime,
+        *,
+        language: str,
     ) -> Story:
-        """Stores a new story with its entities and the update it came from. Raises
-        StoryError when the slug is taken, ValueError for invalid fields."""
-        check_story(slug, title_ru, summary_ru, status, entities)
+        """Stores a new story with its entities and the update it came from; `language` is
+        the one its title and summary are written in. Raises StoryError when the slug is
+        taken, ValueError for invalid fields."""
+        check_story(slug, title, summary, status, entities, language)
         status = StoryStatus(status)
         check_update(first_update)
         recorded = _stamp(now)
@@ -417,9 +495,9 @@ class StoryStore:
             if self.get_by_slug(slug) is not None:
                 raise StoryError(f"a story with the slug {slug!r} exists")
             story_id = self._execute(
-                "INSERT INTO stories (slug, title_ru, summary_ru, status, created_at, "
-                "last_update_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (slug, title_ru, summary_ru, status.value, recorded, last),
+                "INSERT INTO stories (slug, title, summary, status, created_at, "
+                "last_update_at, language) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (slug, title, summary, status.value, recorded, last, language),
             ).lastrowid
             assert story_id is not None
             self._execute_many(
@@ -441,16 +519,18 @@ class StoryStore:
         published = _stamp(update.published_at) if update.published_at else None
         cursor = self._execute(
             "INSERT OR IGNORE INTO story_updates (story_id, published_at, headline, url, "
-            "source, what_changed_ru, recorded_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "source, what_changed, recorded_at, status, language) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 story_id,
                 published,
                 update.headline,
                 update.url,
                 update.source,
-                update.what_changed_ru,
+                update.what_changed,
                 recorded,
                 status.value if status else None,
+                update.language,
             ),
         )
         return cursor.rowcount == 1
@@ -533,6 +613,78 @@ class StoryStore:
             sql += " AND story_id IN (SELECT story_id FROM subscriptions WHERE active = 1)"
         rows = self._execute(f"{sql} ORDER BY recorded_at, id", (_stamp(moment),))
         return [_story_update(row) for row in rows]
+
+    def get_update(self, update_id: int) -> StoryUpdate | None:
+        row = self._execute(
+            f"SELECT {_UPDATE_COLUMNS} FROM story_updates WHERE id = ?", (update_id,)
+        ).fetchone()
+        return _story_update(row) if row else None
+
+    # --- texts in other languages (F31) ----------------------------------------------------
+
+    def story_text(self, story_id: int, language: str) -> StoryText | None:
+        """The story's title and summary in `language`: as stored when that is the language
+        they are written in, else the cached text, else None."""
+        story = self._require(story_id)
+        if story.language == language:
+            return StoryText(story.title, story.summary)
+        row = self._execute(
+            "SELECT title, summary FROM story_texts WHERE story_id = ? AND language = ?",
+            (story_id, language),
+        ).fetchone()
+        return StoryText(*row) if row else None
+
+    def update_text(self, update_id: int, language: str) -> str | None:
+        """The update's `what_changed` in `language`: as stored, cached, or None."""
+        entry = self.get_update(update_id)
+        if entry is None:
+            raise StoryError(f"no update {update_id}")
+        if entry.update.language == language:
+            return entry.update.what_changed
+        row = self._execute(
+            "SELECT what_changed FROM update_texts WHERE update_id = ? AND language = ?",
+            (update_id, language),
+        ).fetchone()
+        return row[0] if row else None
+
+    def cache_texts(
+        self,
+        story_id: int,
+        language: str,
+        story: StoryText | None,
+        updates: Mapping[int, str],
+        now: datetime,
+    ) -> None:
+        """Caches generated texts in `language`: the story's title and summary (if given)
+        and the `what_changed` of its updates by id, all or none. Raises StoryError for an
+        update of another story or a text in the language the row is written in, ValueError
+        for an empty text."""
+        check_language(language)
+        generated = _stamp(now)
+        with self._transaction():
+            current = self._require(story_id)
+            if story is not None:
+                if current.language == language:
+                    raise StoryError(f"story {story_id} is written in {language} already")
+                _check_text("title", story.title)
+                _check_text("summary", story.summary)
+                self._execute(
+                    "INSERT OR REPLACE INTO story_texts (story_id, language, title, summary, "
+                    "generated_at) VALUES (?, ?, ?, ?, ?)",
+                    (story_id, language, story.title, story.summary, generated),
+                )
+            for update_id, text in updates.items():
+                entry = self.get_update(update_id)
+                if entry is None or entry.story_id != story_id:
+                    raise StoryError(f"story {story_id} has no update {update_id}")
+                if entry.update.language == language:
+                    raise StoryError(f"update {update_id} is written in {language} already")
+                _check_text("what_changed", text)
+                self._execute(
+                    "INSERT OR REPLACE INTO update_texts (update_id, language, what_changed, "
+                    "generated_at) VALUES (?, ?, ?, ?)",
+                    (update_id, language, text, generated),
+                )
 
     # --- subscriptions ---------------------------------------------------------------------
 

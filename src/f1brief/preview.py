@@ -27,18 +27,20 @@ def sample_alert() -> alerts.Alert:
     story = Story(
         id=1,
         slug="sample-seat",
-        title_ru="Образец: пилот Haas может перейти в другую команду в 2028",
-        summary_ru="Образец сюжета для проверки вида сообщений.",
+        title="Образец: пилот Haas может перейти в другую команду в 2028",
+        summary="Образец сюжета для проверки вида сообщений.",
         status=StoryStatus.DEVELOPING,
         created_at=SAMPLE_TIME,
         last_update_at=SAMPLE_TIME,
+        language="ru",
     )
     update = Update(
         headline="Sample headline <with> & special characters",
         url="https://example.com/sample/story-update?a=1&b=2",
         source="Motorsport.com",
-        what_changed_ru="Образец: команда подтвердила переговоры, решение ждут после сезона.",
+        what_changed="Образец: команда подтвердила переговоры, решение ждут после сезона.",
         published_at=SAMPLE_TIME,
+        language="ru",
     )
     entry = StoryUpdate(1, story.id, update, SAMPLE_TIME, StoryStatus.DEVELOPING)
     return alerts.Alert(story, (entry,))

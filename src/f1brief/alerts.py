@@ -109,12 +109,12 @@ def blocks(alert: Alert) -> list[th.Block]:
         chip = texts.ALERT_STATUS_CHANGED.format(chip=chip)
     head = th.Block(
         (
-            th.Line((th.Span(f"{texts.ICON_ALERT} "), th.Span(story.title_ru, bold=True))),
+            th.Line((th.Span(f"{texts.ICON_ALERT} "), th.Span(story.title, bold=True))),
             th.plain(chip),
         )
     )
     lines = tuple(
-        source_line(f"• {e.update.what_changed_ru}", e.update.source, e.update.url)
+        source_line(f"• {e.update.what_changed}", e.update.source, e.update.url)
         for e in alert.updates
     )
     return [head, th.Block(lines)]

@@ -29,14 +29,16 @@ FIRST = Update(
     headline="Synthetic: Bearman linked to a 2028 Ferrari seat",
     url="https://example.com/bearman-ferrari",
     source="Example News",
-    what_changed_ru="Синтетика: первый слух.",
+    what_changed="Синтетика: первый слух.",
+    language="ru",
     published_at=datetime(2026, 9, 30, 18, tzinfo=UTC),
 )
 SECOND = Update(
     headline="Synthetic: Ferrari comments on its 2028 line-up",
     url="https://example.com/ferrari-comments",
     source="Example Daily",
-    what_changed_ru="Синтетика: команда прокомментировала.",
+    what_changed="Синтетика: команда прокомментировала.",
+    language="ru",
     published_at=datetime(2026, 10, 5, 12, tzinfo=UTC),
 )
 
@@ -50,12 +52,13 @@ def store(tmp_path: Path):
 def _create(store: StoryStore, slug: str = "bearman-ferrari-2028", **changes):
     args = {
         "slug": slug,
-        "title_ru": "Бирман в Ferrari в 2028?",
-        "summary_ru": "Синтетическое описание.",
+        "title": "Бирман в Ferrari в 2028?",
+        "summary": "Синтетическое описание.",
         "status": StoryStatus.RUMOR,
         "entities": ENTITIES,
         "first_update": FIRST,
         "now": NOW,
+        "language": "ru",
     } | changes
     return store.create(**args)
 
@@ -95,7 +98,7 @@ def test_a_story_without_a_source_url_is_refused(store: StoryStore, url: str) ->
     assert store.stories() == []
 
 
-@pytest.mark.parametrize("field", ["headline", "source", "what_changed_ru"])
+@pytest.mark.parametrize("field", ["headline", "source", "what_changed"])
 def test_an_update_with_an_empty_field_is_refused(store: StoryStore, field: str) -> None:
     story = _create(store)
     with pytest.raises(ValueError, match=field):
@@ -113,7 +116,7 @@ def test_the_database_itself_refuses_an_update_without_a_url(store: StoryStore) 
     story = _create(store)
     with pytest.raises(sqlite3.IntegrityError):
         store._db.execute(
-            "INSERT INTO story_updates (story_id, headline, url, source, what_changed_ru, "
+            "INSERT INTO story_updates (story_id, headline, url, source, what_changed, "
             "recorded_at) VALUES (?, 'h', '', 's', 'w', ?)",
             (story.id, NOW.isoformat()),
         )

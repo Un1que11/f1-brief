@@ -116,7 +116,7 @@ def _update(entry: StoryUpdate) -> str:
         f'      <p class="meta"><time>{when}</time> · {_e(update.source)}</p>\n'
         f'      <p class="headline"><a href="{_e(update.url)}" target="_blank" '
         f'rel="noopener noreferrer">{_e(update.headline)}</a></p>\n'
-        f"      <p>{_e(update.what_changed_ru)}</p>{status}\n"
+        f"      <p>{_e(update.what_changed)}</p>{status}\n"
         "    </li>"
     )
 
@@ -142,10 +142,10 @@ def _story(entry: Entry, now: datetime) -> str:
     updates = "\n".join(_update(u) for u in entry.timeline)
     return (
         f'<article class="{" ".join(classes)}" id="story-{story.id}">\n'
-        f"  <h2>#{story.id} {_e(story.title_ru)}</h2>\n"
+        f"  <h2>#{story.id} {_e(story.title)}</h2>\n"
         f'  <p class="badges">{" ".join(badges)} '
         f'<span class="updated">обновлён {_date(story.last_update_at)}</span></p>\n'
-        f'  <p class="summary">{_e(story.summary_ru)}</p>{who}\n'
+        f'  <p class="summary">{_e(story.summary)}</p>{who}\n'
         f"  <details open>\n"
         f"   <summary>Хронология ({len(entry.timeline)})</summary>\n"
         f'   <ol class="timeline">\n{updates}\n   </ol>\n'
