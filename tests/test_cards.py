@@ -136,6 +136,19 @@ def test_a_raw_url_in_the_text_is_removed(document: dict[str, Any]) -> None:
     assert sum("removed a raw URL" in w for w in warnings) == 2
 
 
+def test_removing_a_raw_url_keeps_the_bold_markers_around_it(document: dict[str, Any]) -> None:
+    raw = answer(
+        section(
+            "standings",
+            "Зачёт",
+            {"text": "**Поул: https://example.com/x**", "sources": [news_source(document)]},
+        )
+    )
+    card = cards.from_model(cards.DIGEST, raw, document, "ru", lambda _: None)
+    assert [i.text for i in card.sections[0].items] == ["**Поул:**"]
+    assert "<b>Поул:</b>" in cards.render(card)[0]
+
+
 def test_a_fenced_answer_is_accepted(document: dict[str, Any]) -> None:
     raw = "```json\n" + answer(section("expect", "Чего ждать", {"text": "x", "unknown": True}))
     card = cards.from_model(cards.DIGEST, raw + "\n```", document, "ru", lambda _: None)
