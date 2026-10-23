@@ -338,7 +338,9 @@ def header(kind: str, document: Mapping[str, Any], language: str) -> tuple[str, 
 # --- the model's answer ------------------------------------------------------------------
 
 # A raw URL with the space before it; it stops at `**`, so bold markers around it stay.
-_RAW_URL = re.compile(r"\s*\(?\bhttps?://[^\s*]+")
+# A raw URL with the space before it: a bracketed one with its brackets, otherwise without
+# the punctuation that ends the sentence after it (or the `**` around it).
+_RAW_URL = re.compile(r"\s*\(\s*https?://[^\s*()]+\s*\)|\s*\bhttps?://[^\s*]*[^\s*.,;:!?)\]]")
 _FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 
 

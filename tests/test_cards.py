@@ -424,3 +424,20 @@ def test_preview_send_without_settings(
     monkeypatch.delenv(ts.CHAT_ID_VAR, raising=False)
     assert main(["preview", "--kind", "quali", "--send"]) == 1
     assert "not set" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("See https://x.com/a.", "See."),
+        ("Пример: https://x.com/a, и дальше", "Пример:, и дальше"),
+        ("См. (https://x.com/a) тут", "См. тут"),
+        ("**Поул: https://x.com/a**", "**Поул:**"),
+    ],
+)
+def test_removing_a_raw_url_keeps_the_punctuation_after_it(
+    document: dict[str, Any], text: str, kept: str
+) -> None:
+    raw = answer(section("standings", "Зачёт", {"text": text, "sources": [news_source(document)]}))
+    card = cards.from_model(cards.DIGEST, raw, document, "ru", lambda _: None)
+    assert card.sections[0].items[0].text == kept
