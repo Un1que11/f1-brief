@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from f1brief import users
 from f1brief.news_archive import NewsArchive
 from f1brief.send_log import SendLog, StateError
 from f1brief.stories import (
@@ -300,16 +301,21 @@ def test_the_schema_version_is_recorded_once(tmp_path: Path) -> None:
     StoryStore(path).close()
     StoryStore(path).close()
     with sqlite3.connect(path) as db:
-        rows = db.execute("SELECT component, version FROM schema_versions").fetchall()
-    assert rows == [("stories", SCHEMA_VERSION)]
+        rows = db.execute(
+            "SELECT component, version FROM schema_versions ORDER BY component"
+        ).fetchall()
+    assert rows == [("stories", SCHEMA_VERSION), ("users", users.SCHEMA_VERSION)]
 
 
 def test_a_file_from_a_newer_version_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     StoryStore(path).close()
     with sqlite3.connect(path) as db:
-        db.execute("UPDATE schema_versions SET version = ?", (SCHEMA_VERSION + 1,))
-    with pytest.raises(StateError, match="newer"):
+        db.execute(
+            "UPDATE schema_versions SET version = ? WHERE component = 'stories'",
+            (SCHEMA_VERSION + 1,),
+        )
+    with pytest.raises(StateError, match="stories schema is version"):
         StoryStore(path)
 
 

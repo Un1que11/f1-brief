@@ -1,7 +1,8 @@
 """What has been sent: a small SQLite file (git-ignored, see `*.db`).
 
-One row per round's digest (`sends`), per round's message after qualifying
-(`qualifying_sends`, F19) and per off-season month's summary (`summaries`).
+One row per account and round's digest (`sends`), per account and round's message after
+qualifying (`qualifying_sends`, F19) and per account and off-season month's summary
+(`summaries`). A `SendLog` works for one account (`user_id`, the owner by default: F32).
 A run claims the row right before sending (`claim`, atomic, so two runs at once cannot both
 send), then records the outcome. A row that says `sending` or `partial` means some messages
 may be in the chat already, so it is never sent again by itself; `forget` removes the row
@@ -15,41 +16,75 @@ from enum import StrEnum
 from pathlib import Path
 from types import TracebackType
 
-DEFAULT_STATE_FILE = "state.db"
-_ROUND = "season = ? AND round = ?"
-_MONTH = "month = ?"
+from f1brief import users
+from f1brief.state_schema import DEFAULT_STATE_FILE, StateError, migrate
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS sends (
-    season INTEGER NOT NULL,
-    round INTEGER NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    messages INTEGER,
-    PRIMARY KEY (season, round)
-);
-CREATE TABLE IF NOT EXISTS qualifying_sends (
-    season INTEGER NOT NULL,
-    round INTEGER NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    messages INTEGER,
-    PRIMARY KEY (season, round)
-);
-CREATE TABLE IF NOT EXISTS summaries (
-    month TEXT NOT NULL PRIMARY KEY,  -- YYYY-MM, Warsaw time
-    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    messages INTEGER
-);
-"""
+__all__ = ["DEFAULT_STATE_FILE", "SendLog", "SendRecord", "StateError", "Status", "SummaryRecord"]
+
+_COMPONENT = "send_log"
+_ROUND = "user_id = ? AND season = ? AND round = ?"
+_MONTH = "user_id = ? AND month = ?"
 
 
-class StateError(Exception):
-    """The state file could not be opened, read or written."""
+def _with_user(table: str, columns: str, key: str) -> tuple[str, ...]:
+    """The statements that give a send-log table a `user_id`, part of its key; the rows
+    stored before there were users belong to the owner."""
+    return (
+        f"""CREATE TABLE {table}_new (
+            user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            {columns},
+            status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            messages INTEGER,
+            PRIMARY KEY (user_id, {key})
+        )""",
+        f"INSERT INTO {table}_new SELECT {users.OWNER_ID}, * FROM {table}",
+        f"DROP TABLE {table}",
+        f"ALTER TABLE {table}_new RENAME TO {table}",
+    )
+
+
+_MIGRATIONS: tuple[tuple[str, ...], ...] = (
+    # The tables as they were before the send log was versioned; a file from then has them
+    # already, so the step changes nothing in it.
+    (
+        """CREATE TABLE IF NOT EXISTS sends (
+            season INTEGER NOT NULL,
+            round INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            messages INTEGER,
+            PRIMARY KEY (season, round)
+        )""",
+        """CREATE TABLE IF NOT EXISTS qualifying_sends (
+            season INTEGER NOT NULL,
+            round INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            messages INTEGER,
+            PRIMARY KEY (season, round)
+        )""",
+        """CREATE TABLE IF NOT EXISTS summaries (
+            month TEXT NOT NULL PRIMARY KEY,  -- YYYY-MM, local time
+            status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'partial')),
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            messages INTEGER
+        )""",
+    ),
+    # F32: one send log per account. The column order of the old tables is kept after
+    # user_id, so `SELECT <owner>, *` copies them.
+    (
+        *_with_user("sends", "season INTEGER NOT NULL, round INTEGER NOT NULL", "season, round"),
+        *_with_user(
+            "qualifying_sends", "season INTEGER NOT NULL, round INTEGER NOT NULL", "season, round"
+        ),
+        *_with_user("summaries", "month TEXT NOT NULL", "month"),
+    ),
+)
 
 
 class Status(StrEnum):
@@ -87,16 +122,22 @@ def _stamp(moment: datetime) -> str:
 
 
 class SendLog:
-    """The state file at `path` (created on first use). Use as a context manager."""
+    """The send log of account `user_id` in the state file at `path` (created on first use).
+    Use as a context manager."""
 
-    def __init__(self, path: str | Path = DEFAULT_STATE_FILE) -> None:
+    def __init__(
+        self, path: str | Path = DEFAULT_STATE_FILE, user_id: int = users.OWNER_ID
+    ) -> None:
         self.path = path
+        self.user_id = user_id
         try:
             # Autocommit: every statement below is a transaction of its own.
             self._db = sqlite3.connect(path, timeout=10.0, isolation_level=None)
-            self._db.executescript(_SCHEMA)
+            self._db.execute("PRAGMA foreign_keys = ON")
         except sqlite3.Error as exc:
             raise StateError(f"cannot open {path}: {exc}") from exc
+        users.ensure_schema(self._db, path)
+        migrate(self._db, path, _COMPONENT, _MIGRATIONS)
 
     def close(self) -> None:
         self._db.close()
@@ -122,14 +163,16 @@ class SendLog:
 
     def _get(self, table: str, where: str, key: tuple[object, ...]) -> tuple | None:
         return self._execute(
-            f"SELECT status, started_at, finished_at, messages FROM {table} WHERE {where}", key
+            f"SELECT status, started_at, finished_at, messages FROM {table} WHERE {where}",
+            (self.user_id, *key),
         ).fetchone()
 
     def _claim(self, table: str, columns: str, key: tuple[object, ...], now: datetime) -> bool:
-        marks = ", ".join("?" * (len(key) + 2))
+        marks = ", ".join("?" * (len(key) + 3))
         cursor = self._execute(
-            f"INSERT OR IGNORE INTO {table} ({columns}, status, started_at) VALUES ({marks})",
-            (*key, Status.SENDING.value, _stamp(now)),
+            f"INSERT OR IGNORE INTO {table} (user_id, {columns}, status, started_at) "
+            f"VALUES ({marks})",
+            (self.user_id, *key, Status.SENDING.value, _stamp(now)),
         )
         return cursor.rowcount == 1
 
@@ -146,18 +189,21 @@ class SendLog:
         cursor = self._execute(
             f"UPDATE {table} SET status = ?, finished_at = ?, messages = ? "
             f"WHERE {where} AND status = ?",
-            (status.value, _stamp(now), n, *key, Status.SENDING.value),
+            (status.value, _stamp(now), n, self.user_id, *key, Status.SENDING.value),
         )
         if cursor.rowcount != 1:
             raise StateError(f"{what} was not claimed for sending")
 
     def _release(self, table: str, where: str, key: tuple[object, ...]) -> None:
         self._execute(
-            f"DELETE FROM {table} WHERE {where} AND status = ?", (*key, Status.SENDING.value)
+            f"DELETE FROM {table} WHERE {where} AND status = ?",
+            (self.user_id, *key, Status.SENDING.value),
         )
 
     def _forget(self, table: str, where: str, key: tuple[object, ...]) -> bool:
-        return self._execute(f"DELETE FROM {table} WHERE {where}", key).rowcount == 1
+        return (
+            self._execute(f"DELETE FROM {table} WHERE {where}", (self.user_id, *key)).rowcount == 1
+        )
 
     def _round_record(self, table: str, season: int, round: int) -> SendRecord | None:
         row = self._get(table, _ROUND, (season, round))
@@ -211,7 +257,8 @@ class SendLog:
         """When the latest round's digest started going out before `before`, or None when
         there is none. Any status counts: a digest that was claimed may be in the chat."""
         row = self._execute(
-            "SELECT MAX(started_at) FROM sends WHERE started_at < ?", (_stamp(before),)
+            "SELECT MAX(started_at) FROM sends WHERE user_id = ? AND started_at < ?",
+            (self.user_id, _stamp(before)),
         ).fetchone()
         return datetime.fromisoformat(row[0]) if row[0] else None
 

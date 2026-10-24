@@ -167,7 +167,9 @@ def test_a_state_file_from_f26_keeps_its_russian_texts(state: Path) -> None:
         store.cache_texts(1, "en", StoryText("Title", "Summary"), {kept.id: "Changed"}, NOW)
         assert store.story_text(1, "en") == StoryText("Title", "Summary")
     with sqlite3.connect(state) as db:
-        assert db.execute("SELECT version FROM schema_versions").fetchall() == [(SCHEMA_VERSION,)]
+        assert db.execute(
+            "SELECT version FROM schema_versions WHERE component = 'stories'"
+        ).fetchall() == [(SCHEMA_VERSION,)]
         columns = {row[1] for row in db.execute("PRAGMA table_info(stories)")}
         assert {"title", "summary", "language"} <= columns
         assert not {"title_ru", "summary_ru"} & columns

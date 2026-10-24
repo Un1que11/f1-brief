@@ -1,12 +1,13 @@
 """`config.toml`: loading, defaults, validation, and how the CLI uses it."""
 
+from datetime import time
 from pathlib import Path
 
 import pytest
 
 from f1brief import cli, config
 from f1brief.cli import main
-from f1brief.config import Config, ConfigError, Favourite
+from f1brief.config import Config, ConfigError, Favourite, load
 
 REPO_CONFIG = Path(__file__).resolve().parent.parent / "config.toml"
 
@@ -110,6 +111,27 @@ def test_timezone_is_usable() -> None:
     assert str(Config(timezone="America/Chicago").tz) == "America/Chicago"
 
 
+def test_any_iana_timezone_is_accepted(tmp_path: Path) -> None:
+    # F32: the code no longer assumes Warsaw, so any zone is a valid default.
+    settings = load(write(tmp_path, '[digest]\ntimezone = "America/New_York"\n'))
+    assert settings.timezone == "America/New_York"
+
+
+def test_alert_settings(tmp_path: Path) -> None:
+    text = '[alerts]\nmax_per_day = 5\nquiet_start = "22:30"\nquiet_end = "07:15"\n'
+    settings = load(write(tmp_path, text))
+    assert (settings.max_alerts_per_day, settings.quiet_start, settings.quiet_end) == (
+        5,
+        time(22, 30),
+        time(7, 15),
+    )
+    assert (Config().max_alerts_per_day, Config().quiet_start, Config().quiet_end) == (
+        3,
+        time(23),
+        time(8),
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "message"),
     [
@@ -122,7 +144,10 @@ def test_timezone_is_usable() -> None:
         ('[digest]\ndays_before_fp1 = "2"\n', "must be a whole number"),
         ('[digest]\ntimezone = "Europe/Atlantis"\n', "unknown time zone"),
         ('[digest]\ntimezone = "../etc"\n', "unknown time zone"),
-        ('[digest]\ntimezone = "America/Chicago"\n', "not supported yet"),
+        ("[alerts]\nmax_per_day = -1\n", "alerts.max_per_day: must be a whole number"),
+        ('[alerts]\nquiet_start = "25:00"\n', "not a time of day"),
+        ("[alerts]\nquiet_end = 8\n", "alerts.quiet_end: must be a string"),
+        ("[alerts]\nquiet = 1\n", r"\[alerts\]: unknown key\(s\) quiet"),
         ("[digest]\ndays_befor_fp1 = 3\n", r"unknown key\(s\) days_befor_fp1"),
         ("telegram_token = 'x'\n", r"top level: unknown key\(s\) telegram_token"),
         ('digest = "x"\n', r"\[digest\]: must be a table"),
