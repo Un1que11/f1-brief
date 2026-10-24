@@ -302,7 +302,7 @@ def test_collect_builds_every_section_with_sources(
         )
 
     assert document["kind"] == "after_qualifying"
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert document["favourites"] == {
         "teams": [{"id": "mclaren", "name": "McLaren"}],
         "drivers": [

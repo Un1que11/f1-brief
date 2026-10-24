@@ -29,7 +29,8 @@ from f1brief.send_log import SendLog, SendRecord, Status
 from f1brief.send_window import Window
 
 # 2 (F20): favourites from the config (ids and names), shared teammate head-to-heads.
-SCHEMA_VERSION = 2
+# 3 (F32): times in the reader's zone (`timezone`): `start_warsaw` is now `start_local`.
+SCHEMA_VERSION = 3
 OPENS_AFTER = timedelta(hours=2)
 # News since FP1 (penalties, grid drops); this far back when FP1 has no start time.
 NEWS_FALLBACK = timedelta(days=3)

@@ -245,7 +245,7 @@ def test_collect_merges_archived_and_fresh_news(calendar: list[Race]) -> None:
     )
 
     assert document["kind"] == "monthly_summary"
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert [d["id"] for d in document["favourites"]["drivers"]] == ["russell", "ocon", "bearman"]
     assert document["period"] == {"from": "2025-12-01", "to": "2026-01-03"}
     assert document["missing"] == []

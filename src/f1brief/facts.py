@@ -34,7 +34,8 @@ from f1brief.story_texts import Localized
 # 2 (F20): favourites from the config (several teams), `team_form.teams`, shared teammate
 # head-to-heads in `drivers`, `favourite_teams_points` in `track`, news `future`.
 # 3 (F25): `stories`, the followed stories and their updates since the last digest.
-SCHEMA_VERSION = 3
+# 4 (F32): times in the reader's zone (`timezone`): `start_warsaw` is now `start_local`.
+SCHEMA_VERSION = 4
 NEWS_DAYS = 7
 # How far back `stories` looks when no digest has been sent yet.
 STORIES_DAYS = 14

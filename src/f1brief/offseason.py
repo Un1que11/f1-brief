@@ -21,7 +21,8 @@ from f1brief.schedule import WARSAW, Race, Session
 from f1brief.send_log import SendLog, Status, SummaryRecord
 
 # 2 (F20): favourites from the config (several teams), news `future`.
-SCHEMA_VERSION = 2
+# 3 (F32): times in the reader's zone (`timezone`): `start_warsaw` is now `start_local`.
+SCHEMA_VERSION = 3
 SUMMARY_DAYS = 7
 LEAD_DAYS = 14
 

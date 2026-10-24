@@ -46,7 +46,7 @@ def test_every_section_is_collected(document: dict[str, Any]) -> None:
     assert document["missing"] == []
     assert list(document["sections"]) == list(facts.SECTIONS)
     assert all(document["sections"].values())
-    assert document["schema_version"] == 3
+    assert document["schema_version"] == 4
     assert document["sections"]["stories"] == NO_STORIES
     assert document["generated_at"] == "2026-10-15T14:00:00+02:00"
     assert document["favourites"] == {
