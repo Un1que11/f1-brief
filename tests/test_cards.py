@@ -433,6 +433,8 @@ def test_preview_send_without_settings(
         ("Пример: https://x.com/a, и дальше", "Пример:, и дальше"),
         ("См. (https://x.com/a) тут", "См. тут"),
         ("**Поул: https://x.com/a**", "**Поул:**"),
+        ("Поул: **https://x.com/a**.", "Поул:."),
+        ("**Норрис** https://x.com/a **P1**", "**Норрис** **P1**"),
     ],
 )
 def test_removing_a_raw_url_keeps_the_punctuation_after_it(
