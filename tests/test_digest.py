@@ -337,7 +337,7 @@ def test_cli_collects_when_no_document_is_given(
     from f1brief import cli
 
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: STUB)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None, tz=None: STUB)
 
     assert main(["digest", "--prompt-only"]) == 0
     assert facts_of(capsys.readouterr().out) == STUB
@@ -345,7 +345,7 @@ def test_cli_collects_when_no_document_is_given(
     monkeypatch.setattr(
         facts,
         "collect",
-        lambda now, favourites, stories=None: {"sections": {"race": None}, "missing": []},
+        lambda now, favourites, stories=None, tz=None: {"sections": {"race": None}, "missing": []},
     )
     assert main(["digest", "--prompt-only"]) == 1
 

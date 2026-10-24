@@ -443,7 +443,9 @@ def english(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     (tmp_path / "config.toml").write_text('[digest]\nlanguage = "en"\n', encoding="utf-8")
     monkeypatch.setattr(cli, "_now", lambda: NOW)
 
-    def fake_collect(now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
+    def fake_collect(
+        now: datetime, favourites: object, stories: Any = None, tz: Any = None
+    ) -> dict[str, Any]:
         return {"sections": {"race": {"round": 18}, "stories": stories()}, "missing": []}
 
     monkeypatch.setattr(facts, "collect", fake_collect)

@@ -33,7 +33,9 @@ class Pipeline:
         self.stories: list[dict[str, Any]] = []
         self.languages: list[str] = []
 
-    def collect(self, now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
+    def collect(
+        self, now: datetime, favourites: object, stories: Any = None, tz: Any = None
+    ) -> dict[str, Any]:
         self.collected += 1
         if stories is not None:
             self.stories.append(stories())

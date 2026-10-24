@@ -3,10 +3,11 @@
 An update is alerted on when its story is followed and it was recorded after the story was
 followed. One alert covers all of a story's waiting updates, each with its source, and
 carries the "Отписаться" button the bot (F23) answers. At most `MAX_PER_DAY` alerts go out
-per Warsaw calendar day, and none in the quiet hours (23:00-08:00 Warsaw): those wait for the
-first run after them, the oldest first. Updates of a muted story are skipped, not saved for
-later, and so is an update that has waited longer than `STALE_AFTER` (the digest's
-"Твои сюжеты" covers both).
+per calendar day, and none in the quiet hours (23:00-08:00 by default): those wait for the
+first run after them, the oldest first. The day and the quiet hours are the account's local
+time (`QuietHours`, Warsaw by default; F32 makes the zone, the hours and the cap settings).
+Updates of a muted story are skipped, not saved for later, and so is an update that has
+waited longer than `STALE_AFTER` (the digest's "Твои сюжеты" covers both).
 
 An alert is recorded as sent before it is sent, so it goes out at most once; one Telegram
 refuses outright is made to wait again. `plan` decides, `deliver` sends and records; the clock
@@ -16,30 +17,50 @@ is always passed in.
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, tzinfo
 
 from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply, chunks, status_line
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore, StoryUpdate
 
 MAX_PER_DAY = 3
-# Warsaw wall-clock time: from QUIET_START until QUIET_END the next morning.
+# Local wall-clock time: from QUIET_START until QUIET_END the next morning.
 QUIET_START = time(23)
 QUIET_END = time(8)
 STALE_AFTER = timedelta(days=3)
 
 
-def is_quiet(now: datetime) -> bool:
-    local = now.astimezone(WARSAW).time()
-    return local >= QUIET_START or local < QUIET_END
+@dataclass(frozen=True)
+class QuietHours:
+    """No alerts from `start` to `end` (wall-clock time in `tz`); a window that crosses
+    midnight (23:00-08:00) ends the next morning, and equal times mean no quiet hours."""
+
+    start: time = QUIET_START
+    end: time = QUIET_END
+    tz: tzinfo = WARSAW
+
+    def contains(self, now: datetime) -> bool:
+        local = now.astimezone(self.tz).time()
+        if self.start == self.end:
+            return False
+        if self.start < self.end:
+            return self.start <= local < self.end
+        return local >= self.start or local < self.end
 
 
-def day_bounds(now: datetime) -> tuple[datetime, datetime]:
-    """The Warsaw calendar day `now` falls in, from midnight to the next midnight (23 or 25
-    hours long on the days the clocks change)."""
-    day = now.astimezone(WARSAW).date()
-    start = datetime.combine(day, time(), WARSAW)
-    return start, datetime.combine(day + timedelta(days=1), time(), WARSAW)
+DEFAULT_QUIET = QuietHours()
+
+
+def is_quiet(now: datetime, hours: QuietHours = DEFAULT_QUIET) -> bool:
+    return hours.contains(now)
+
+
+def day_bounds(now: datetime, tz: tzinfo = WARSAW) -> tuple[datetime, datetime]:
+    """The calendar day in `tz` that `now` falls in, from midnight to the next midnight (23
+    or 25 hours long on the days the clocks change)."""
+    day = now.astimezone(tz).date()
+    start = datetime.combine(day, time(), tz)
+    return start, datetime.combine(day + timedelta(days=1), time(), tz)
 
 
 @dataclass(frozen=True)
@@ -67,9 +88,14 @@ class Plan:
         return "story alerts: " + ", ".join(parts)
 
 
-def plan(store: StoryStore, now: datetime, max_per_day: int = MAX_PER_DAY) -> Plan:
-    """What to send now, what waits and what is skipped. Alerts are ordered by their oldest
-    update."""
+def plan(
+    store: StoryStore,
+    now: datetime,
+    max_per_day: int = MAX_PER_DAY,
+    hours: QuietHours = DEFAULT_QUIET,
+) -> Plan:
+    """What to send now to the store's account, what waits and what is skipped. Alerts are
+    ordered by their oldest update; the daily cap counts the account's local day."""
     skip: list[StoryUpdate] = []
     by_story: dict[int, list[StoryUpdate]] = {}
     for update in store.unalerted():
@@ -84,8 +110,8 @@ def plan(store: StoryStore, now: datetime, max_per_day: int = MAX_PER_DAY) -> Pl
         story = store.get(story_id)
         if story is not None:
             alerts.append(Alert(story, tuple(updates)))
-    quiet = is_quiet(now)
-    room = 0 if quiet else max(0, max_per_day - store.alerts_sent(*day_bounds(now)))
+    quiet = is_quiet(now, hours)
+    room = 0 if quiet else max(0, max_per_day - store.alerts_sent(*day_bounds(now, hours.tz)))
     return Plan(tuple(alerts[:room]), tuple(alerts[room:]), tuple(skip), quiet)
 
 

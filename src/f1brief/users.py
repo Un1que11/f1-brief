@@ -433,9 +433,11 @@ class UserStore:
         defaults: Favourites,
         teams: Sequence[Favourite] = (),
         drivers: Sequence[Favourite] = (),
+        write: bool = True,
     ) -> Favourites:
         """Adds the teams and drivers that are not the account's favourites yet and returns
-        its favourites. The first change copies the defaults, so the account keeps them."""
+        its favourites. The first change copies the defaults, so the account keeps them. With
+        `write=False` nothing is stored: the result is what the account would have."""
         current = self.favourites(user_id, defaults)
 
         def merged(existing: tuple[Favourite, ...], new: Sequence[Favourite]) -> tuple:
@@ -444,16 +446,16 @@ class UserStore:
             return (*existing, *fresh)
 
         updated = Favourites(merged(current.teams, teams), merged(current.drivers, drivers))
-        if updated == current:
-            return current
-        self.update_settings(user_id, favourites=updated)
+        if updated != current and write:
+            self.update_settings(user_id, favourites=updated)
         return updated
 
     def remove_favourite(
-        self, user_id: int, defaults: Favourites, kind: str, fav_id: str
+        self, user_id: int, defaults: Favourites, kind: str, fav_id: str, write: bool = True
     ) -> Favourites:
         """Removes one team (`kind` "teams") or driver ("drivers") from the account's
-        favourites and returns them; an id that is not a favourite changes nothing."""
+        favourites and returns them; an id that is not a favourite changes nothing. With
+        `write=False` nothing is stored."""
         if kind not in ("teams", "drivers"):
             raise ValueError(f"kind must be 'teams' or 'drivers', not {kind!r}")
         current = self.favourites(user_id, defaults)
@@ -461,5 +463,6 @@ class UserStore:
         if fav_id not in {f.id for f in entries}:
             return current
         updated = replace(current, **{kind: tuple(f for f in entries if f.id != fav_id)})
-        self.update_settings(user_id, favourites=updated)
+        if write:
+            self.update_settings(user_id, favourites=updated)
         return updated

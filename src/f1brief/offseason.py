@@ -65,8 +65,8 @@ class Decision:
     next_race: Race | None = None
 
 
-def _already(record: SummaryRecord) -> str:
-    when = record.started_at.astimezone(WARSAW).strftime("%a %d %b %H:%M")
+def _already(record: SummaryRecord, tz: tzinfo = WARSAW) -> str:
+    when = record.started_at.astimezone(tz).strftime("%a %d %b %H:%M")
     if record.status is Status.SENT:
         return f"the {record.month} summary was already sent at {when}"
     return (
@@ -109,7 +109,7 @@ def decide(
         return no(f"the monthly summary goes out in the first {SUMMARY_DAYS} days of a month")
     record = log.get_summary(month)
     if record is not None:
-        return no(_already(record))
+        return no(_already(record, tz))
     return Decision(True, True, f"due: the {month} summary", month, since, race)
 
 
@@ -124,10 +124,10 @@ def describe(decision: Decision) -> str:
 # --- the facts document -----------------------------------------------------------------
 
 
-def season_start_facts(race: Race) -> dict[str, Any]:
+def season_start_facts(race: Race, tz: tzinfo = WARSAW) -> dict[str, Any]:
     url = f"{jolpica.BASE_URL}/{race.season}.json?limit={jolpica.PAGE_LIMIT}"
     return {
-        **facts.race_facts(race),
+        **facts.race_facts(race, tz),
         "sources": [{"name": jolpica.SOURCE_NAME, "url": url}],
     }
 
@@ -146,10 +146,12 @@ def collect(
     items: Iterable[news.NewsItem],
     favourites: Favourites,
     failed_feeds: Iterable[str] = (),
+    tz: tzinfo = WARSAW,
 ) -> dict[str, Any]:
     """The facts document for the monthly summary: the news items published since `since`
-    (archived and freshly fetched ones, merged here) and the start of the next season.
-    `failed_feeds` are the feeds that could not be read today. `now` must be aware."""
+    (archived and freshly fetched ones, merged here) and the start of the next season, with
+    dates and times in `tz`. `failed_feeds` are the feeds that could not be read today.
+    `now` must be aware."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     failed = tuple(failed_feeds)
@@ -167,15 +169,15 @@ def collect(
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "monthly_summary",
-        "generated_at": now.astimezone(WARSAW).isoformat(),
-        "timezone": str(WARSAW),
+        "generated_at": now.astimezone(tz).isoformat(),
+        "timezone": str(tz),
         "period": {
-            "from": since.astimezone(WARSAW).date().isoformat(),
-            "to": now.astimezone(WARSAW).date().isoformat(),
+            "from": since.astimezone(tz).date().isoformat(),
+            "to": now.astimezone(tz).date().isoformat(),
         },
         "favourites": facts.favourites_facts(favourites),
         "sections": {
-            "season_start": season_start_facts(next_race) if next_race else None,
+            "season_start": season_start_facts(next_race, tz) if next_race else None,
             "news": news_data,
         },
         "missing": missing,

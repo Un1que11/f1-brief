@@ -14,7 +14,7 @@ import httpx
 import pytest
 from conftest import FIXTURES
 
-from f1brief import bot, config
+from f1brief import bot, config, users
 from f1brief import telegram_send as ts
 from f1brief.bot import Answer, Bot, Button, Reply
 from f1brief.cli import main
@@ -937,7 +937,7 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
         seen["days_before"] = handler.days_before
         seen["chat"] = handler.chat_id
         seen["teams"] = handler.favourites.team_ids
-        # The entities button writes the real config file outside a dry run.
+        # Outside a dry run the entities button stores the owner's favourites (F32).
         handler.store.follow(1, NOW)
         handler.handle(press("favs:1"), NOW)
         raise KeyboardInterrupt
@@ -952,7 +952,12 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
         "chat": CHAT,
         "teams": ("mclaren", "haas"),
     }
-    favourites = config.load(cli_dir / "config.toml").favourites
+    # config.toml keeps the defaults; the owner's own favourites are in the state file.
+    assert config.load(cli_dir / "config.toml").favourites.team_ids == ("mclaren", "haas")
+    with users.UserStore(cli_dir / "state.db") as accounts:
+        owner = accounts.owner()
+        favourites = accounts.favourites(owner.id, config.DEFAULT_FAVOURITES)
+    assert owner.chat_id == CHAT
     assert favourites.team_ids == ("mclaren", "haas", "ferrari")
     assert "hamilton" in favourites.driver_ids
 

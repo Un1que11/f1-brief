@@ -17,12 +17,12 @@ short digest of it for one reader, who gets it on Telegram before the weekend st
 4. If something the structure below asks for is not in the document, say plainly that it is
    unknown. Never guess or fill the gap. A section that is `null` is listed in `missing` with a
    reason: say the section is unknown and give that reason. A `null` field means that value is
-   unknown. A session whose `start_warsaw` is `null` has only a date; its start time is to be
+   unknown. A session whose `start_local` is `null` has only a date; its start time is to be
    confirmed.
 5. Copy numbers, positions, points, dates and times as they are in the document. A derived
    number (a gap in points, a change in position) is allowed only when it follows directly
    from numbers in the document.
-6. All times are Warsaw time; say so once, in the schedule.
+6. All times are local time in the document's `timezone`; say so once, in the schedule.
 7. The favourites are in `favourites` (teams and drivers, with ids and names); there can be
    any number of them. Call them by the names the sections give them, except that a
    favourite whose `names` has a `en` form is always called by that form. News items with
@@ -40,7 +40,7 @@ short digest of it for one reader, who gets it on Telegram before the weekend st
 
 Eight numbered sections in this order, each with a short English heading:
 
-1. Round, track, session schedule in Warsaw time (`race`).
+1. Round, track, session schedule in local time (`race`, `timezone`).
 2. What has changed since the last race: standings, penalties, regulations, upgrades
    (`standings`, `news`).
 3. The favourite teams, each in turn: form over the last races, pace, qualifying, upgrades

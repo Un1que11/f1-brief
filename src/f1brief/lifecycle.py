@@ -7,7 +7,8 @@ module covers the other half of "Lifecycle" in CLAUDE.md. A followed story with 
 followed if that is later, so a story followed after a long silence is not offered at once.
 Each stretch is offered once: a later update starts a new one.
 
-Offers wait while the story is muted and in the quiet hours (23:00-08:00 Warsaw), like alerts,
+Offers wait while the story is muted and in the account's quiet hours (`alerts.QuietHours`),
+like alerts,
 but do not count towards the alerts' daily limit: there is at most one per story per stretch.
 An offer is recorded before it is sent, so it goes out at most once; one Telegram refuses is
 made due again. `plan` decides, `deliver` sends and records; the clock is always passed in.
@@ -16,9 +17,9 @@ made due again. `plan` decides, `deliver` sends and records; the clock is always
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
-from f1brief.alerts import is_quiet
+from f1brief.alerts import DEFAULT_QUIET, QuietHours, is_quiet
 from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply
 from f1brief.bot_texts import days_ru
 from f1brief.schedule import WARSAW
@@ -46,8 +47,13 @@ class Plan:
         return "offers to unfollow quiet stories: " + ", ".join(parts)
 
 
-def plan(store: StoryStore, now: datetime, quiet_after: timedelta = QUIET_AFTER) -> Plan:
-    """The offers due at `now`, the longest-quiet story first."""
+def plan(
+    store: StoryStore,
+    now: datetime,
+    quiet_after: timedelta = QUIET_AFTER,
+    hours: QuietHours = DEFAULT_QUIET,
+) -> Plan:
+    """The offers due at `now` to the store's account, the longest-quiet story first."""
     due: list[Offer] = []
     for story in store.followed():
         subscription = store.subscription(story.id)
@@ -58,14 +64,14 @@ def plan(store: StoryStore, now: datetime, quiet_after: timedelta = QUIET_AFTER)
             continue
         due.append(Offer(story, quiet_since))
     due.sort(key=lambda o: (o.quiet_since, o.story.id))
-    if is_quiet(now):
+    if is_quiet(now, hours):
         return Plan((), tuple(due))
     return Plan(tuple(due), ())
 
 
-def text(offer: Offer, now: datetime) -> str:
+def text(offer: Offer, now: datetime, tz: tzinfo = WARSAW) -> str:
     story = offer.story
-    last = story.last_update_at.astimezone(WARSAW).strftime("%d.%m.%Y")
+    last = story.last_update_at.astimezone(tz).strftime("%d.%m.%Y")
     return "\n".join(
         [
             f"Сюжет #{story.id} «{story.title}» ({STATUS_RU[story.status]}): "
@@ -79,8 +85,8 @@ def text(offer: Offer, now: datetime) -> str:
     )
 
 
-def reply(offer: Offer, now: datetime) -> Reply:
-    return Reply(text(offer, now), ((Button("Отписаться", f"{UNFOLLOW}:{offer.story.id}"),),))
+def reply(offer: Offer, now: datetime, tz: tzinfo = WARSAW) -> Reply:
+    return Reply(text(offer, now, tz), ((Button("Отписаться", f"{UNFOLLOW}:{offer.story.id}"),),))
 
 
 def _warn(message: str) -> None:
@@ -93,13 +99,14 @@ def deliver(
     now: datetime,
     send: Callable[[Reply], None],
     warn: Callable[[str], None] = _warn,
+    tz: tzinfo = WARSAW,
 ) -> bool:
     """Sends the planned offers in order. When Telegram refuses one, it and the rest wait
     for the next run. False when an offer failed."""
     for offer in planned.send:
         store.record_stale_offer(offer.story.id, offer.quiet_since, now)
         try:
-            send(reply(offer, now))
+            send(reply(offer, now, tz))
         except BotError as exc:
             store.forget_stale_offer(offer.story.id, offer.quiet_since)
             warn(f"offer to unfollow story #{offer.story.id} not sent: {exc}")

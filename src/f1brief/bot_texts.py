@@ -5,12 +5,12 @@ pressed buttons and the command menu, with the date formats they use.
 
 They live here, apart from the bot's logic, so the message catalog (F30) can take them over
 as they are: plain strings, `str.format` templates with named fields, and a few small
-functions where a text depends on a number or a date. Russian only for now; times are Warsaw
-time, 24-hour.
+functions where a text depends on a number or a date. Russian only for now; times are the
+account's local time (Warsaw by default, F32), 24-hour.
 """
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 from f1brief import jolpica
 from f1brief.schedule import WARSAW, Race, SessionKind
@@ -30,20 +30,34 @@ SESSIONS = {
 }
 
 
-def date(moment: datetime) -> str:
-    """ "19.10.2026", in Warsaw time."""
-    return moment.astimezone(WARSAW).strftime("%d.%m.%Y")
+def date(moment: datetime, tz: tzinfo = WARSAW) -> str:
+    """ "19.10.2026", in local time."""
+    return moment.astimezone(tz).strftime("%d.%m.%Y")
 
 
-def date_time(moment: datetime) -> str:
-    """ "19.10.2026 14:05", in Warsaw time."""
-    return moment.astimezone(WARSAW).strftime("%d.%m.%Y %H:%M")
+def date_time(moment: datetime, tz: tzinfo = WARSAW) -> str:
+    """ "19.10.2026 14:05", in local time."""
+    return moment.astimezone(tz).strftime("%d.%m.%Y %H:%M")
 
 
-def day_time(moment: datetime) -> str:
-    """ "Пт 24.10 19:30", in Warsaw time."""
-    local = moment.astimezone(WARSAW)
+def day_time(moment: datetime, tz: tzinfo = WARSAW) -> str:
+    """ "Пт 24.10 19:30", in local time."""
+    local = moment.astimezone(tz)
     return f"{WEEKDAYS[local.weekday()]} {local:%d.%m %H:%M}"
+
+
+def _is_warsaw(tz: tzinfo) -> bool:
+    return str(tz) == str(WARSAW)
+
+
+def by_zone(tz: tzinfo) -> str:
+    """ "по Варшаве", or "по времени America/New_York" for another zone."""
+    return "по Варшаве" if _is_warsaw(tz) else f"по времени {tz}"
+
+
+def zone_note(tz: tzinfo) -> str:
+    """ "время варшавское", or "время America/New_York"."""
+    return "время варшавское" if _is_warsaw(tz) else f"время {tz}"
 
 
 def days_ru(n: int) -> str:
@@ -119,25 +133,25 @@ COMMANDS = (
 CALENDAR_UNAVAILABLE = "Календарь сейчас недоступен, попробуй позже."
 NO_RACES = "В календаре сезона больше нет гонок."
 NO_DIGEST_PLANNED = "Следующий дайджест — когда в календаре появится новая гонка."
-NEXT_DIGEST_AT = "Следующий дайджест придёт {when} по Варшаве — к этапу «{race}»."
+NEXT_DIGEST_AT = "Следующий дайджест придёт {when} {zone} — к этапу «{race}»."
 NEXT_DIGEST_SOON = "Дайджест к этапу «{race}» придёт в течение часа."
 DIGEST_SENT = "Дайджест к этому этапу отправлен {when}."
-DIGEST_AT = "Дайджест к этому этапу придёт {when} по Варшаве."
+DIGEST_AT = "Дайджест к этому этапу придёт {when} {zone}."
 DIGEST_SOON = "Дайджест к этому этапу придёт в течение часа."
 DIGEST_NOT_SENT = "Дайджест к этому этапу не отправлялся."
 
 
-def next_race(race: Race, digest: str) -> str:
-    """Round, circuit and session times in Warsaw, then the line about the digest."""
+def next_race(race: Race, digest: str, tz: tzinfo = WARSAW) -> str:
+    """Round, circuit and session times in local time, then the line about the digest."""
     lines = [
         f"🏁 Этап {race.round}: {race.name} ({race.season})",
         f"{race.circuit.name}, {race.circuit.locality}, {race.circuit.country}",
         "",
-        "Расписание (время варшавское):",
+        f"Расписание ({zone_note(tz)}):",
     ]
     for session in race.sessions:
         if session.start_utc is not None:
-            when = day_time(session.start_utc)
+            when = day_time(session.start_utc, tz)
         else:
             when = f"{WEEKDAYS[session.date.weekday()]} {session.date:%d.%m}, время уточняется"
         lines.append(f"{when} — {SESSIONS[session.kind]}")
@@ -156,7 +170,7 @@ FAVOURITES_HINT = (
     "«Следить за …»."
 )
 REMOVE_BUTTON = "✕ {name}"
-REMOVED = "Убрал из избранного: {name}. Вернуть можно в config.toml или кнопкой из сюжета."
+REMOVED = "Убрал из избранного: {name}. Вернуть можно кнопкой из сюжета."
 ALREADY_REMOVED = "{name} уже нет в избранном."
 NOT_REMOVED = "Не получилось убрать из избранного: {error}"
 ANSWER_REMOVED = "Убрано"

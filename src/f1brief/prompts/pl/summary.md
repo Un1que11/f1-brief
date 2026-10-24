@@ -26,7 +26,8 @@ Telegram.
    whose `names` has a `pl` form is always called by that form. News items with
    `future: true` are about the future in F1 (contract, moves) of a favourite driver with
    `track_future: true`.
-7. The period the summary covers is `period` (Warsaw dates); say it once, at the start.
+7. The period the summary covers is `period` (dates in the document's `timezone`); say it
+   once, at the start.
 
 ## Summary structure
 
@@ -35,7 +36,7 @@ Four numbered sections in this order, each with a short Polish heading:
 1. Driver moves: contracts, seats and team changes (news items with the `contracts` topic).
 2. Testing and launches: tests, shakedowns and car launches (the `testing` topic).
 3. The favourites: other news about the favourite teams and drivers.
-4. The next season: when and where it starts (`season_start`), in Warsaw time.
+4. The next season: when and where it starts (`season_start`), in the document's `timezone`.
 
 ## Output
 

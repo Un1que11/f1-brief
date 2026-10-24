@@ -75,35 +75,36 @@ def _when(moment: datetime, tz: tzinfo = WARSAW) -> str:
     return moment.astimezone(tz).strftime("%a %d %b %H:%M")
 
 
-def _already(record: SendRecord) -> str:
-    when = _when(record.started_at)
+def _already(record: SendRecord, tz: tzinfo = WARSAW) -> str:
+    when = _when(record.started_at, tz)
     if record.status is Status.SENT:
         return f"already sent at {when}"
     return f"(maybe) partly sent at {when}; not resent automatically, check the chat"
 
 
-def decide(races: list[Race], now: datetime, log: SendLog) -> Decision:
-    """The decision for the next race that has not started. `now` must be timezone-aware."""
+def decide(races: list[Race], now: datetime, log: SendLog, tz: tzinfo = WARSAW) -> Decision:
+    """The decision for the next race that has not started, for the log's account, with
+    local dates in `tz`. `now` must be timezone-aware."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     race = schedule.next_race(races, now)
     if race is None:
         return Decision(False, "no upcoming race weekend in the calendar")
     fp1 = race.first_session
-    under_way = now >= (fp1.start_utc or _local_midnight(fp1.date, WARSAW))
-    w = window(race)
+    under_way = now >= (fp1.start_utc or _local_midnight(fp1.date, tz))
+    w = window(race, tz)
     if w is None:
         return Decision(
             False, "the calendar has no qualifying for this weekend", race, None, under_way
         )
     record = log.get_qualifying(race.season, race.round)
     if record is not None:
-        return Decision(False, _already(record), race, w, under_way)
+        return Decision(False, _already(record, tz), race, w, under_way)
     if now < w.opens:
-        return Decision(False, f"not yet: due from {_when(w.opens)}", race, w, under_way)
+        return Decision(False, f"not yet: due from {_when(w.opens, tz)}", race, w, under_way)
     if now >= w.closes:
         return Decision(False, "the race has started", race, w, under_way)
-    return Decision(True, f"due: the race starts {_when(w.closes)}", race, w, under_way)
+    return Decision(True, f"due: the race starts {_when(w.closes, tz)}", race, w, under_way)
 
 
 def describe(decision: Decision) -> str:
@@ -255,10 +256,12 @@ def collect(
     now: datetime,
     favourites: Favourites,
     client: httpx.Client | None = None,
+    tz: tzinfo = WARSAW,
 ) -> dict[str, Any]:
     """The facts document for the message: the weekend, its qualifying `results`, the
     favourite drivers' recent form (grid against finish, teammate) and the news since FP1.
-    A section that fails is `null` and listed in `missing`. `now` must be aware."""
+    Times are in `tz`. A section that fails is `null` and listed in `missing`. `now` must be
+    aware."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     owns_client = client is None
@@ -266,7 +269,7 @@ def collect(
     recorder = facts.Recorder()
     client.event_hooks["request"].append(recorder)
     sections: dict[str, dict[str, Any] | None] = {
-        "race": facts.race_facts(race),
+        "race": facts.race_facts(race, tz),
         "qualifying": qualifying_facts(race, results, favourites),
     }
     missing: list[dict[str, str]] = []
@@ -306,8 +309,8 @@ def collect(
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "after_qualifying",
-        "generated_at": now.astimezone(WARSAW).isoformat(),
-        "timezone": str(WARSAW),
+        "generated_at": now.astimezone(tz).isoformat(),
+        "timezone": str(tz),
         "favourites": facts.favourites_facts(favourites),
         "sections": {name: sections[name] for name in SECTIONS},
         "missing": missing,

@@ -39,7 +39,7 @@ class Stubs:
             raise self.error
         return self.results
 
-    def collect(self, race, results, now, favourites) -> dict[str, Any]:
+    def collect(self, race, results, now, favourites, tz=None) -> dict[str, Any]:
         self.collected.append(
             (race.round, len(results), favourites.driver_ids, favourites.team_ids)
         )
@@ -246,7 +246,7 @@ def test_quali_writes_the_prompt_for_a_given_round(
 ) -> None:
     stubs, recorder = setup
     document = {"kind": "after_qualifying", "sections": {"qualifying": {}}, "missing": []}
-    monkeypatch.setattr(after_qualifying, "collect", lambda *args: document)
+    monkeypatch.setattr(after_qualifying, "collect", lambda *args, **kwargs: document)
 
     args = ["quali", "--round", "17", "--driver", "bearman", "--team", "haas", "--prompt-only"]
     assert main(args) == 0

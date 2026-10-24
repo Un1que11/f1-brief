@@ -219,7 +219,7 @@ class _Due:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
 
-    def due(self, days_before: int, state: str) -> int:
+    def due(self, days_before: int, state: str, *args: object) -> int:
         self.calls.append(("due", days_before))
         return 0
 
