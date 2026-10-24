@@ -245,7 +245,10 @@ per chat (`ignored chat <id>; TELEGRAM_CHAT_ID is <id>`), so a wrong chat id sho
 
 On start the listener registers its commands with `setMyCommands`, so they appear under the
 "/" button in Telegram. Every text lives in `src/f1brief/bot_texts.py`. Only one listener per
-bot can poll: a second one, or a webhook on the bot, stops it with an error.
+bot can poll: a second one, or a webhook on the bot, stops it with an error. The listener reads
+the account's settings (time zone, days before FP1) when it starts, so after changing them in
+`config.toml` or the state file, restart it (`launchctl kickstart -k
+gui/$(id -u)/local.f1brief.bot`); favourites changed from the bot take effect at once.
 
 ```bash
 uv run f1brief bot --check                 # the bot's username, webhook, configured chat id
