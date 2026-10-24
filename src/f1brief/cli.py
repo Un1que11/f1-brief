@@ -61,7 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("config", help="show the settings in effect and where they come from")
 
-    next_cmd = commands.add_parser("next", help="show the next race weekend in Warsaw time")
+    next_cmd = commands.add_parser(
+        "next", help="show the next race weekend in local time (the owner's time zone)"
+    )
     next_cmd.add_argument("--season", default="current", help="season year (default: current)")
 
     standings_cmd = commands.add_parser(
@@ -240,8 +242,8 @@ def build_parser() -> argparse.ArgumentParser:
             "--days-before",
             type=int,
             metavar="N",
-            help="open the send window N days before FP1, Warsaw time "
-            "(default: digest.days_before_fp1 in the config file)",
+            help="open the send window N days before FP1, local time "
+            "(default: the owner's days before FP1, digest.days_before_fp1 in the config file)",
         )
 
     due_cmd = commands.add_parser(
@@ -275,9 +277,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     alerts_cmd = commands.add_parser(
         "alerts",
-        help="send the alerts on followed stories that are due (none in the quiet hours "
-        "23:00-08:00 Warsaw, at most 3 a day) and the offers to unfollow a followed story "
-        "with no news for 60 days; `run` does this too",
+        help="send the alerts on followed stories that are due (none in the quiet hours, "
+        "23:00-08:00 local time by default, at most 3 a day) and the offers to unfollow a "
+        "followed story with no news for 60 days; `run` does this too",
     )
     alerts_cmd.add_argument(
         "--state",
@@ -470,7 +472,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _cmd_next(season: str) -> int:
+def _cmd_next(season: str, tz: tzinfo = schedule.WARSAW) -> int:
     try:
         races = schedule.fetch_schedule(season)
     except schedule.ScheduleError as exc:
@@ -480,7 +482,7 @@ def _cmd_next(season: str) -> int:
     if race is None:
         print(f"No upcoming races in season {season}.")
         return 0
-    print(schedule.format_schedule(race))
+    print(schedule.format_schedule(race, tz))
     return 0
 
 
@@ -1710,7 +1712,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config":
         return _cmd_config(settings, state if settings != defaults else None)
     if args.command == "next":
-        return _cmd_next(args.season)
+        return _cmd_next(args.season, settings.tz)
     if args.command == "standings":
         return _cmd_standings(args.season)
     favourites = settings.favourites

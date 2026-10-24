@@ -1,23 +1,26 @@
 # F1 Brief — a digest before each race weekend
 
 ## Goal
-About 2 days before the first practice session, send Misha a short digest via Telegram, in the language set by `[digest] language` in `config.toml` (`ru`, `en` or `pl`; default `ru`): what has changed since the last race, overall and for his favourites, and what to expect this weekend. Runs locally on a MacBook.
+About 2 days before the first practice session, send each user a short digest via Telegram, in their language (`ru`, `en` or `pl`; the default is `[digest] language` in `config.toml`, itself `ru` by default): what has changed since the last race, overall and for their favourites, and what to expect this weekend, with times in their time zone. Runs locally on a MacBook.
+- **Users (F32):** accounts live in the state file: `users` (Telegram user id, chat_id, name, language, time zone, status `active | blocked`, created_at) and `user_settings` (favourites, days before FP1, alert cap, quiet hours). `config.toml` holds the defaults: a setting an account has not changed takes the config's value. Subscriptions, alerts, offers to unfollow and the send logs are keyed by `user_id`; one account never sees another's.
+- Misha's account is the owner (user 1): created with the tables, it got every row stored before there were users, and its chat is `TELEGRAM_CHAT_ID` from `.env`. Until sign-up (F33) and per-user feeds (F34) it is the only account and everything is sent to it.
 
-## Favourites (in `config.toml`)
+## Favourites (defaults in `config.toml`, per user in the state file)
 - Teams: McLaren, Haas
 - Drivers: George Russell, Esteban Ocon, Oliver Bearman
 - For Ocon, also track news about his future in F1 (contract, moves).
 - Favourites are a list in config, never hardcoded: any number of teams and drivers. Every collector (form, teammate comparison, track history, pace, news) iterates over them.
+- Each user has their own favourites: the config's until they change them from the bot, then their own list in `user_settings` (the bot never writes `config.toml`).
 - A favourite may set its name form per language (`names = { ru = "..." }`); texts in that language always use it.
 
 ## Hot stories (subscribable storylines)
-A **story** is a developing storyline that spans weeks or months, e.g. "Bearman may replace Hamilton at Ferrari in 2028, so his 2027 teammate battle matters". Stories are kept in an archive and Misha can follow or unfollow each one.
-- **Model (SQLite):** `stories` (id, slug, title, summary, language, status `rumor | developing | confirmed | denied | resolved`, created_at, last_update_at), `story_entities` (story_id, kind `driver | team | person`, ref — Jolpica id where one exists), `story_updates` (story_id, published_at, headline, url, source, what_changed, language), `subscriptions` (story_id, active, followed_at, unfollowed_at, muted_until). Texts are stored in the language detection wrote them in (Russian); other languages are generated on demand by `claude -p` from the stored story and sourced update only, and cached in `story_texts` / `update_texts`; the source URL is never generated.
+A **story** is a developing storyline that spans weeks or months, e.g. "Bearman may replace Hamilton at Ferrari in 2028, so his 2027 teammate battle matters". Stories are kept in one shared archive and each user can follow or unfollow each one for themselves.
+- **Model (SQLite):** `stories` (id, slug, title, summary, language, status `rumor | developing | confirmed | denied | resolved`, created_at, last_update_at), `story_entities` (story_id, kind `driver | team | person`, ref — Jolpica id where one exists), `story_updates` (story_id, published_at, headline, url, source, what_changed, language), `subscriptions` (user_id, story_id, active, followed_at, unfollowed_at, muted_until). Texts are stored in the language detection wrote them in (Russian); other languages are generated on demand by `claude -p` from the stored story and sourced update only, and cached in `story_texts` / `update_texts`; the source URL is never generated.
 - **Detection:** hot items are news about favourites or followed entities that touch contracts, seats, transfers, team principals, regulations or penalties. Each run, `claude -p` gets only the new items plus the list of existing stories and returns JSON: attach the item to a story, propose a new story, or ignore. Every story and every update must carry the source URL of the article it came from; no update without a source. Rumours are labelled as rumours.
-- **Following a story** subscribes to that story only. The bot then *offers* (buttons, never automatic) to also follow its key entities, e.g. Bearman and Haas, which adds them to the favourites.
+- **Following a story** subscribes the user to that story only. The bot then *offers* (buttons, never automatic) to also follow its key entities, e.g. Bearman and Haas, which adds them to the pressing user's favourites.
 - **Unfollowing must be one tap:** every story message carries an inline "Отписаться" button; `/unfollow <id>` and `/mute <id> <days>` also work. Unfollowing keeps the story in the archive.
 - **Bot (Russian UI, buttons everywhere; every text in `src/f1brief/bot_texts.py`):** `/start` explains the bot and when the next digest comes, then shows the main menu (stories, archive, next race, favourites, help); any non-command text gets the menu and every reply has «← Меню». Stories open from buttons (timeline with sources, «Следить» / «Отписаться» / «Без уведомлений на 7 дней»). Commands: `/stories` (followed and recent), `/story <id>` (timeline with sources), `/follow <id>`, `/unfollow <id>`, `/mute <id> <days>`, `/archive` (all, including resolved; the reply also carries a static HTML archive page with filters followed / all / resolved), `/next`, `/favourites` (remove buttons), `/help`. Callback data and command names are language-independent.
-- **Alerts:** a new update on a followed story sends a short message right away, with at most 3 alerts a day and quiet hours 23:00–08:00 Warsaw (queued until morning).
+- **Alerts:** a new update on a followed story sends the user a short message right away, with at most 3 alerts a day and quiet hours 23:00–08:00 in the user's time zone (queued until morning); the cap and the hours are per-user settings, defaults in `[alerts]`.
 - **Digest:** a section "Твои сюжеты" covers each followed story: what changed since the last digest and why it matters this weekend (e.g. Bearman vs his teammate in qualifying and race this season).
 - **Lifecycle:** a story whose outcome is officially announced becomes `confirmed`/`denied`, then `resolved`. A followed story with no update for 60 days triggers one message offering to unfollow.
 
@@ -29,7 +32,7 @@ A **story** is a developing storyline that spans weeks or months, e.g. "Bearman 
 - Schedule: launchd, runs every day; the script itself decides whether it is time to send (2 days before FP1, once per round)
 
 ## Digest structure
-1. Round, track, session schedule in Warsaw time
+1. Round, track, session schedule in the reader's time zone (Warsaw by default)
 2. What has changed since the last race: standings, penalties, regulations, upgrades
 3. Favourite teams (McLaren, Haas): form over the last 3–5 races, pace, qualifying, upgrades
 4. Favourite drivers (Russell, Ocon, Bearman): results, comparison with their teammate, news

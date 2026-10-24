@@ -37,8 +37,9 @@ uv sync
 
 `config.toml` in the working directory holds the settings: favourite teams and drivers (as
 lists of Jolpica ids with display names and news keywords), the digest language, how many days
-before FP1 the digest goes out, and the time zone. It has no secrets; the Telegram token and
-chat id stay in `.env`. Without the file the built-in defaults (identical to the checked-in
+before FP1 the digest goes out, the time zone, and the story alerts' daily cap and quiet hours
+(`[alerts]`: `max_per_day`, `quiet_start`, `quiet_end`). It has no secrets; the Telegram token
+and chat id stay in `.env`. Without the file the built-in defaults (identical to the checked-in
 file) apply; a file with a typo or a bad value is an error, not ignored. Use another file with
 `uv run f1brief --config PATH <command>` and check what is in effect with `uv run f1brief config`.
 
@@ -50,6 +51,18 @@ stay Russian for now. A favourite may give its name form per language, e.g.
 `names = { ru = "Джордж Расселл" }`: the digest then always uses that form in that language
 (otherwise the model picks one, which can differ between digests). News matching still uses
 `name` and `aliases`.
+
+Accounts (F32): these settings are the defaults of every account. The state file
+(`state.db`) has a `users` table and per-user settings (favourites, days before FP1, alert cap,
+quiet hours, language and time zone); a setting an account has not changed takes the config's
+value, so editing `config.toml` still reaches it. For now there is one account, Misha's (the
+owner): it is created when the state file is first opened, everything stored before (followed
+stories, alerts, the send log) is moved to it, and its chat is `TELEGRAM_CHAT_ID`, recorded the
+first time `run`, `alerts` or `bot` talks to Telegram. Favourites added or removed from the bot
+are the owner's and live in the state file; `config.toml` is not written. `f1brief config`
+shows the owner's settings in effect, saying when they include changes from the state file.
+`digest.timezone` (and a user's time zone) may be any IANA zone: the session schedule, the send
+window and the quiet hours follow it.
 
 `due` and `run` take their `--days-before` default from `digest.days_before_fp1`. Every
 collector iterates over the favourites lists: team form for each favourite team, driver form
@@ -180,8 +193,9 @@ articles about Bearman replacing Hamilton at Ferrari; run `uv run f1brief seed-s
 
 Story alerts (F24): when a followed story gets an update (recorded after it was followed),
 `f1brief alerts` sends a short message with what changed, the source and an "Отписаться" button;
-a story's waiting updates go in one message. At most 3 alerts per Warsaw calendar day and none
-from 23:00 to 08:00 Warsaw: the rest wait for a later run, the oldest first. Updates of a muted
+a story's waiting updates go in one message. At most 3 alerts per local calendar day and none
+from 23:00 to 08:00 local time (`[alerts]` in the config, or the account's own settings; local
+is the account's time zone): the rest wait for a later run, the oldest first. Updates of a muted
 story, and updates that have waited more than 3 days, are skipped (the digest covers them).
 `run` sends the due alerts at the end of every run, so under launchd they go out within the hour
 and the night's queue with the first run after 08:00. `alerts --dry-run` prints them and records
@@ -213,19 +227,19 @@ read it from `--state`.
 per chat (`ignored chat <id>; TELEGRAM_CHAT_ID is <id>`), so a wrong chat id shows up in
 `bot.err.log`. Russian UI, buttons everywhere:
 
-- `/start` says in a few lines what the bot sends and when the next digest comes (Warsaw
-  time), then shows the main menu: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая гонка», «⭐ Избранное»,
-  «❓ Помощь». Any text that is not a command gets the menu, and every reply has «← Меню».
+- `/start` says in a few lines what the bot sends and when the next digest comes (the
+  account's local time), then shows the main menu: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая
+  гонка», «⭐ Избранное», «❓ Помощь». Any text that is not a command gets the menu, and every reply has «← Меню».
 - «📰 Сюжеты» (`/stories`) lists the followed and recent stories, each as a button that opens
   its timeline with sources and the buttons «Следить», «Отписаться» (one tap) and «Без
   уведомлений на 7 дней». Once a story is followed, the bot offers "Следить за <names>" for its
-  drivers and teams that are not favourites yet; pressing it appends them to `config.toml`
-  (people without a Jolpica id are skipped).
-- «🏁 Следующая гонка» (`/next`): the round, circuit and session times in Warsaw, and when the
-  digest for it comes (or when it was sent). The calendar is read from Jolpica at most once an
-  hour.
-- «⭐ Избранное» (`/favourites`): the favourite teams and drivers from `config.toml`, each with
-  a «✕» button that removes it from the file (comments and other entries are kept).
+  drivers and teams that are not favourites yet; pressing it adds them to the account's
+  favourites in the state file (people without a Jolpica id are skipped).
+- «🏁 Следующая гонка» (`/next`): the round, circuit and session times in local time, and when
+  the digest for it comes (or when it was sent). The calendar is read from Jolpica at most
+  once an hour.
+- «⭐ Избранное» (`/favourites`): the account's favourite teams and drivers (the config's
+  until it changes them), each with a «✕» button that removes it.
 - The typed commands keep working: `/story <id>`, `/follow <id>`, `/unfollow <id>`,
   `/mute <id> <days>`, `/archive` (all, resolved included), `/help`.
 
@@ -242,8 +256,8 @@ uv run f1brief bot                         # the listener (Ctrl-C to stop)
 `--check` asks Telegram for the bot's username and whether a webhook is set (a webhook blocks
 polling), prints them with the configured chat id and exits: the first thing to run when the
 bot stays silent. `--dry-run` answers saved updates (a `getUpdates` answer or a JSON list) and
-prints the replies and buttons: nothing is sent, the story changes are rolled back and
-`config.toml` is not written. It needs no token; the chat to accept is `--chat-id` or
+prints the replies and buttons: nothing is sent, the story changes are rolled back and the
+favourites are not changed. It needs no token; the chat to accept is `--chat-id` or
 `TELEGRAM_CHAT_ID`.
 
 The archive is also a static HTML page (F28): every story with its timeline, each update
