@@ -1,0 +1,189 @@
+# Russian texts of the bot, the story alerts, the offer to unfollow a quiet story and the
+# archive page (F30). Every language file has exactly the same keys and, in each template,
+# the same {fields}: tests/test_messages.py checks both. Templates are `str.format` strings.
+
+# --- formats -------------------------------------------------------------------------------
+[format]
+# Fields: day, month, year, hour, minute (numbers), weekday, month_name (from the lists below).
+date = "{day:02d}.{month:02d}.{year}"
+date_time = "{day:02d}.{month:02d}.{year} {hour:02d}:{minute:02d}"
+day_time = "{weekday} {day:02d}.{month:02d} {hour:02d}:{minute:02d}"
+day = "{weekday} {day:02d}.{month:02d}"
+decimal_separator = ","
+group_separator = "\u00A0"  # no-break space
+weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+# Plural forms by CLDR category (ru: one, few, many); {n} is the number.
+[plural.days]
+one = "{n} день"
+few = "{n} дня"
+many = "{n} дней"
+
+[status]
+rumor = "слух"
+developing = "развивается"
+confirmed = "подтверждено"
+denied = "опровергнуто"
+resolved = "завершён"
+
+[sessions]
+fp1 = "Практика 1"
+fp2 = "Практика 2"
+fp3 = "Практика 3"
+sprint_qualifying = "Спринт-квалификация"
+sprint = "Спринт"
+qualifying = "Квалификация"
+race = "Гонка"
+
+[entity_kinds]
+driver = "пилот"
+team = "команда"
+person = "персона"
+
+# The commands under the "/" button in Telegram (setMyCommands), in this order.
+[commands]
+start = "Что умеет бот и меню"
+stories = "Сюжеты: твои и недавние"
+archive = "Все сюжеты, включая завершённые"
+next = "Следующая гонка и дайджест к ней"
+favourites = "Избранные команды и гонщики"
+help = "Все команды"
+
+# --- the bot: menu, /start, /help -----------------------------------------------------------
+[text]
+menu_stories = "📰 Сюжеты"
+menu_archive = "🗂 Архив"
+menu_next = "🏁 Следующая гонка"
+menu_favourites = "⭐ Избранное"
+menu_help = "❓ Помощь"
+menu_back = "← Меню"
+menu_prompt = "Я понимаю кнопки и команды. Что показать?"
+
+start_same_day = "в день первой практики"
+start_days_before = "за {days} до первой практики"
+greeting = """
+Привет! Я присылаю F1-дайджест {when}: что изменилось с прошлой гонки, как дела у твоих команд и гонщиков и чего ждать на уикенде.
+После квалификации — короткое сообщение о том, как она прошла у избранных.
+Новости по сюжетам, за которыми ты следишь (контракты, переходы, слухи), приходят сразу, а ночью (23:00–08:00) — утром.
+{next_digest}"""
+
+help = """
+Команды:
+/start — что умеет бот и меню
+/stories — сюжеты, за которыми ты следишь, и недавние
+/story <номер> — хронология сюжета с источниками
+/follow <номер> — следить за сюжетом
+/unfollow <номер> — отписаться (сюжет останется в архиве)
+/mute <номер> <дни> — без уведомлений на N дней
+/archive — все сюжеты, включая завершённые
+/next — следующая гонка и когда придёт дайджест
+/favourites — избранные команды и гонщики
+
+Всё это есть и на кнопках: /start."""
+
+unknown_command = "Не знаю команду /{name}."
+
+# --- the next race and the digest -----------------------------------------------------------
+calendar_unavailable = "Календарь сейчас недоступен, попробуй позже."
+no_races = "В календаре сезона больше нет гонок."
+no_digest_planned = "Следующий дайджест — когда в календаре появится новая гонка."
+next_digest_at = "Следующий дайджест придёт {when} по Варшаве — к этапу «{race}»."
+next_digest_soon = "Дайджест к этапу «{race}» придёт в течение часа."
+digest_sent = "Дайджест к этому этапу отправлен {when}."
+digest_at = "Дайджест к этому этапу придёт {when} по Варшаве."
+digest_soon = "Дайджест к этому этапу придёт в течение часа."
+digest_not_sent = "Дайджест к этому этапу не отправлялся."
+race_title = "🏁 Этап {round}: {name} ({season})"
+race_schedule = "Расписание (время варшавское):"
+race_session = "{when} — {session}"
+race_session_unknown_time = "{day}, время уточняется"
+race_source = "Источник: {source}."
+
+# --- favourites -----------------------------------------------------------------------------
+favourites_title = "⭐ Избранное — по нему собирается дайджест."
+favourite_teams = "Команды: {names}"
+favourite_drivers = "Гонщики: {names}"
+none = "нет"
+favourites_hint = "Убрать — кнопкой ниже. Добавить можно из сюжета: после «Следить» появится кнопка «Следить за …»."
+remove_button = "✕ {name}"
+removed = "Убрал из избранного: {name}. Вернуть можно в config.toml или кнопкой из сюжета."
+already_removed = "{name} уже нет в избранном."
+not_removed = "Не получилось убрать из избранного: {error}"
+answer_removed = "Убрано"
+
+# --- stories --------------------------------------------------------------------------------
+no_stories = "Сюжетов пока нет. Все сюжеты: /archive"
+following = "Ты следишь:"
+following_none = "Ты пока не следишь ни за одним сюжетом."
+recent = "Недавние сюжеты:"
+muted_until = " (без уведомлений до {date})"
+stories_hint = "Нажми на сюжет, чтобы открыть хронологию."
+story_line = "{title} — {status}, {date}"
+story_line_numbered = "#{id} {title} — {status}, {date}"
+
+archive_empty = "Архив пуст: сюжетов пока нет."
+archive_title = "Все сюжеты ({count}):"
+archive_followed = " — следишь"
+archive_hint = "Подробнее: /story <номер>"
+archive_caption = "Архив страницей: открой файл в браузере. Фильтры: слежу / все / завершённые, у каждого обновления — ссылка на источник."
+
+story_title = "#{id} {title}"
+story_status = "Статус: {status} · {following}"
+story_followed = "ты следишь"
+story_not_followed = "не следишь"
+timeline = "Хронология:"
+timeline_entry = "{date} — {headline} ({source})"
+status_change = "Статус → {status}"
+
+story_number_missing = "Укажи номер сюжета, например: /{command} 3"
+story_unknown = "Нет сюжета {arg}. Все сюжеты: /archive"
+
+followed = "Теперь ты следишь за сюжетом #{id} «{title}»."
+already_followed = "Ты уже следишь за сюжетом #{id} «{title}»."
+unfollowed = "Ты больше не следишь за сюжетом #{id} «{title}». Он остаётся в архиве: /story {id}"
+not_followed = "Ты не следишь за сюжетом #{id}."
+mute_days = "Укажи число дней от 1 до {max}, например: /mute {id} 7"
+mute_not_followed = "Ты не следишь за сюжетом #{id}. Сначала: /follow {id}"
+muted = "Сюжет #{id} «{title}» без уведомлений до {until}."
+
+button_follow = "Следить"
+button_unfollow = "Отписаться"
+button_follow_entities = "Следить за {names}"
+button_mute_days = "Без уведомлений на {days}"
+
+added = "Добавил в избранное: {names}. Они появятся в следующем дайджесте."
+not_added = "Не получилось добавить в избранное: {error}"
+
+# Short answers shown in the client when a button is pressed.
+answer_gone = "Этой кнопки больше нет"
+answer_followed = "Следишь"
+answer_unfollowed = "Отписка"
+answer_muted = "Без уведомлений"
+answer_already_favourite = "Уже в избранном"
+answer_added = "Добавлено"
+answer_failed = "Не получилось"
+
+# --- story alerts and the offer to unfollow a quiet story -----------------------------------
+alert_title = "Новое в сюжете #{id} «{title}» ({status})"
+timeline_link = "Хронология: /story {id}"
+stale_offer = """
+Сюжет #{id} «{title}» ({status}): нет новостей уже {days}, последнее обновление — {date}.
+Отписаться? Если хочешь следить дальше, ничего не нажимай: новости по нему придут как обычно."""
+
+# --- the archive page -----------------------------------------------------------------------
+page_title = "F1 Brief — архив сюжетов"
+page_heading = "Архив сюжетов"
+page_generated = "Сформирован {when} (Варшава) · сюжетов: {count}"
+page_footer = "Каждое обновление ведёт на статью-источник. Слухи помечены статусом «{rumor}»."
+page_following = "следишь"
+page_muted_until = "без уведомлений до {date}"
+page_updated = "обновлён {date}"
+page_who = "Кто: {entities}"
+page_timeline = "Хронология ({count})"
+page_filter_followed = "Слежу"
+page_filter_all = "Все"
+page_filter_resolved = "Завершённые"
+page_empty_followed = "Ты пока не следишь ни за одним сюжетом."
+page_empty_all = "Сюжетов пока нет."
+page_empty_resolved = "Завершённых сюжетов нет."

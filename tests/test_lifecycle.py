@@ -17,6 +17,7 @@ from f1brief import cli, digest, lifecycle
 from f1brief import story_detection as sd
 from f1brief import telegram_send as ts
 from f1brief.bot import Bot, BotError, Reply
+from f1brief.bot_texts import texts_for
 from f1brief.cli import main
 from f1brief.config import DEFAULT_FAVOURITES
 from f1brief.stories import (
@@ -353,7 +354,7 @@ def test_an_offer_telegram_refuses_is_due_again(store: StoryStore) -> None:
     ],
 )
 def test_days_in_russian(days: int, text: str) -> None:
-    assert lifecycle.days_ru(days) == text
+    assert texts_for("ru").days(days) == text
 
 
 def test_the_offer_names_the_story_and_carries_the_unfollow_button(store: StoryStore) -> None:

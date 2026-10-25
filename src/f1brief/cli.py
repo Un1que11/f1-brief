@@ -1040,10 +1040,10 @@ def _cmd_run(
     code = _run_due(days_before, state, dry_run, model, env_file, favourites, language)
     # Every run, whatever was due: alerts that waited for the morning go out with the first
     # run after the quiet hours.
-    return max(code, _cmd_alerts(state, dry_run, env_file))
+    return max(code, _cmd_alerts(state, dry_run, env_file, language))
 
 
-def _cmd_alerts(state: str, dry_run: bool, env_file: str) -> int:
+def _cmd_alerts(state: str, dry_run: bool, env_file: str, language: str) -> int:
     now = _now()
     try:
         with stories.StoryStore(state) as store:
@@ -1059,10 +1059,10 @@ def _cmd_alerts(state: str, dry_run: bool, env_file: str) -> int:
                 print(offers.describe(), file=sys.stderr)
             if dry_run:
                 for alert in planned.send:
-                    for reply in alerts.replies(alert):
+                    for reply in alerts.replies(alert, language):
                         _print_action(reply)
                 for offer in offers.send:
-                    _print_action(lifecycle.reply(offer, now))
+                    _print_action(lifecycle.reply(offer, now, language))
                 print("dry run: no alert sent, nothing recorded", file=sys.stderr)
                 return 0
             if not (planned.send or offers.send):
@@ -1072,9 +1072,9 @@ def _cmd_alerts(state: str, dry_run: bool, env_file: str) -> int:
             with _telegram_client() as client:
                 send = bot.BotApi(credentials, client).send
                 # Offers wait while Telegram refuses the alerts.
-                ok = alerts.deliver(store, planned, now, send) and lifecycle.deliver(
-                    store, offers, now, send
-                )
+                ok = alerts.deliver(
+                    store, planned, now, send, language=language
+                ) and lifecycle.deliver(store, offers, now, send, language=language)
             return 0 if ok else 1
     except (telegram_send.SendError, send_log.StateError, stories.StoryError) as exc:
         print(f"error: story alerts: {exc}", file=sys.stderr)
@@ -1326,6 +1326,7 @@ def _cmd_bot(
             calendar=_cached_calendar(),
             digest_sent=_digest_sent(log),
             days_before=settings.days_before_fp1,
+            language=settings.language,
         )
 
     try:
@@ -1356,7 +1357,7 @@ def _cmd_bot(
         ):
             handler = handler_for(store, credentials.chat_id, log)
             api = bot.BotApi(credentials, client)
-            bot.register_commands(api)
+            bot.register_commands(api, language=settings.language)
             print("listening for updates (Ctrl-C to stop)", file=sys.stderr)
             bot.listen(api, handler, offsets=offsets)
     except KeyboardInterrupt:
@@ -1527,14 +1528,14 @@ def _cmd_forget(
     return 0
 
 
-def _cmd_archive_page(output: str, state: str) -> int:
+def _cmd_archive_page(output: str, state: str, language: str) -> int:
     if not Path(state).is_file():
         print(f"error: no state file {state} (no stories yet?)", file=sys.stderr)
         return 1
     now = _now()
     try:
         with stories.StoryStore(state) as store:
-            page = archive_page.build(store, now)
+            page = archive_page.build(store, now, language)
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1688,7 +1689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings.language,
         )
     if args.command == "alerts":
-        return _cmd_alerts(args.state, args.dry_run, args.env_file)
+        return _cmd_alerts(args.state, args.dry_run, args.env_file, settings.language)
     if args.command == "bot":
         return _cmd_bot(
             args.state,
@@ -1708,7 +1709,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.seeds, args.state, args.model, args.prompt_only, args.dry_run, favourites
         )
     if args.command == "archive-page":
-        return _cmd_archive_page(args.output, args.state)
+        return _cmd_archive_page(args.output, args.state, settings.language)
     if args.command == "launchd":
         return _cmd_launchd(
             args.output,
