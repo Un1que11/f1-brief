@@ -4,6 +4,22 @@ A pre-race-weekend F1 digest delivered to Telegram. About two days before FP1 it
 facts (calendar, standings, form, pace, weather, news) and turns them into a short digest.
 It runs locally on macOS. See `CLAUDE.md` for the full spec and `BACKLOG.md` for the roadmap.
 
+## How it works
+
+1. **Collect facts.** Calendar and standings from Jolpica-F1, sessions and pace from OpenF1,
+   track weather from Open-Meteo, news from RSS feeds of major F1 outlets.
+2. **Write the digest.** A headless LLM run gets only the collected facts as JSON and writes the
+   digest in Russian, English or Polish. Every claim must trace back to a collected fact and a
+   source; prompt templates per language are kept in sync by a test.
+3. **Track stories.** New items about favourite drivers and teams (contracts, seats, transfers,
+   penalties) are attached to long-running storylines or open new ones, each update with its
+   source URL. Users follow a story with one tap and get rate-limited alerts with quiet hours.
+4. **Deliver.** A Telegram bot with inline buttons sends the digest about two days before FP1, a
+   short message after qualifying, and story alerts. launchd runs it hourly; a Docker image is
+   also available.
+
+Python 3.12, uv, SQLite, pytest (760+ tests, no network in tests), ruff, GitHub Actions.
+
 ## Quick start (macOS)
 
 ```bash
