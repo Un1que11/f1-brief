@@ -37,6 +37,8 @@ from f1brief.schedule import ScheduleError, SessionKind
 from f1brief.send_log import StateError
 from f1brief.stories import StoryStore
 
+RU_MENU = bot.main_menu(bot_texts.texts_for("ru"))
+
 # NOW is Monday 19.10.2026 11:00 in Warsaw: the next round is the United States GP (round 18,
 # FP1 Fri 23.10 19:30 Warsaw), whose send window opens Wed 21.10 00:00 Warsaw.
 USA_WINDOW_OPENS = datetime(2026, 10, 20, 22, tzinfo=UTC)
@@ -110,11 +112,11 @@ def test_start_explains_the_bot_and_when_the_next_digest_comes(ui: Bot) -> None:
     assert lines[3] == (
         "Следующий дайджест придёт Ср 21.10 00:00 по Варшаве — к этапу «United States Grand Prix»."
     )
-    assert reply.buttons == bot.MAIN_MENU
+    assert reply.buttons == RU_MENU
 
 
 def test_the_main_menu_has_the_five_screens() -> None:
-    labels = [b.text for row in bot.MAIN_MENU for b in row]
+    labels = [b.text for row in RU_MENU for b in row]
     assert labels == ["📰 Сюжеты", "🗂 Архив", "🏁 Следующая гонка", "⭐ Избранное", "❓ Помощь"]
 
 
@@ -148,7 +150,7 @@ def test_start_without_the_calendar_still_answers(ui: Bot, warnings: list[str]) 
     ui.calendar = unavailable
     [reply] = ui.handle(message("/start"), NOW)
     assert reply.text.endswith("Календарь сейчас недоступен, попробуй позже.")
-    assert reply.buttons == bot.MAIN_MENU
+    assert reply.buttons == RU_MENU
     assert warnings == ["calendar: Jolpica: HTTP 503"]
 
 
@@ -187,7 +189,7 @@ def test_each_menu_button_opens_its_screen_with_a_way_back(
 
 def test_the_menu_button_shows_the_menu(ui: Bot) -> None:
     actions = ui.handle(press("menu:main"), NOW)
-    assert actions == [Answer("cb1"), Reply(bot_texts.MENU_PROMPT, bot.MAIN_MENU)]
+    assert actions == [Answer("cb1"), Reply(bot_texts.texts_for("ru").menu_prompt, RU_MENU)]
 
 
 def test_the_archive_button_sends_the_page_too(store: StoryStore, ui: Bot) -> None:
@@ -340,8 +342,10 @@ def test_next_without_the_calendar_or_races(ui: Bot) -> None:
     assert text_of(ui.handle(message("/next"), NOW)) == "В календаре сезона больше нет гонок."
 
 
-def test_every_session_kind_has_a_russian_name() -> None:
-    assert set(bot_texts.SESSIONS) == set(SessionKind)
+def test_every_session_kind_has_a_name_in_every_language() -> None:
+    for language in config.LANGUAGES:
+        texts = bot_texts.texts_for(language)
+        assert all(texts.session(kind) for kind in SessionKind)
 
 
 # --- favourites -------------------------------------------------------------------------------
@@ -629,7 +633,7 @@ def test_the_bot_keeps_every_text_in_bot_texts() -> None:
 def test_every_callback_fits_telegrams_64_bytes(store: StoryStore, ui: Bot) -> None:
     story = seed(store)
     store.follow(story.id, NOW)
-    keyboards: list[Any] = [bot.MAIN_MENU]
+    keyboards: list[Any] = [RU_MENU]
     for update in (message("/stories"), message("/favourites"), message(f"/story {story.id}")):
         keyboards += [r.buttons for r in ui.handle(update, NOW) if isinstance(r, Reply)]
     data = [b.data for keyboard in keyboards for row in keyboard for b in row]

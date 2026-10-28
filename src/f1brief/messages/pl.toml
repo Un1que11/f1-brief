@@ -1,0 +1,188 @@
+# Polish texts of the bot, the story alerts, the offer to unfollow a quiet story and the
+# archive page (F30). Same keys and {fields} as ru.toml (checked by tests/test_messages.py).
+
+# --- formats -------------------------------------------------------------------------------
+[format]
+date = "{day:02d}.{month:02d}.{year}"
+date_time = "{day:02d}.{month:02d}.{year} {hour:02d}:{minute:02d}"
+day_time = "{weekday} {day:02d}.{month:02d} {hour:02d}:{minute:02d}"
+day = "{weekday} {day:02d}.{month:02d}"
+decimal_separator = ","
+group_separator = " "  # no-break space
+weekdays = ["pon.", "wt.", "śr.", "czw.", "pt.", "sob.", "niedz."]
+months = ["sty", "lut", "mar", "kwi", "maj", "cze", "lip", "sie", "wrz", "paź", "lis", "gru"]
+
+# Plural forms by CLDR category (pl: one, few, many); {n} is the number.
+[plural.days]
+one = "{n} dzień"
+few = "{n} dni"
+many = "{n} dni"
+
+[status]
+rumor = "plotka"
+developing = "w toku"
+confirmed = "potwierdzone"
+denied = "zdementowane"
+resolved = "zakończony"
+
+[sessions]
+fp1 = "Trening 1"
+fp2 = "Trening 2"
+fp3 = "Trening 3"
+sprint_qualifying = "Kwalifikacje do sprintu"
+sprint = "Sprint"
+qualifying = "Kwalifikacje"
+race = "Wyścig"
+
+[entity_kinds]
+driver = "kierowca"
+team = "zespół"
+person = "osoba"
+
+[commands]
+start = "Co potrafi bot i menu"
+stories = "Wątki: twoje i ostatnie"
+archive = "Wszystkie wątki, także zakończone"
+next = "Następny wyścig i jego przegląd"
+favourites = "Ulubione zespoły i kierowcy"
+help = "Wszystkie polecenia"
+
+# --- the bot: menu, /start, /help -----------------------------------------------------------
+[text]
+menu_stories = "📰 Wątki"
+menu_archive = "🗂 Archiwum"
+menu_next = "🏁 Następny wyścig"
+menu_favourites = "⭐ Ulubione"
+menu_help = "❓ Pomoc"
+menu_back = "← Menu"
+menu_prompt = "Rozumiem przyciski i polecenia. Co pokazać?"
+
+start_same_day = "w dniu pierwszego treningu"
+start_days_before = "na {days} przed pierwszym treningiem"
+greeting = """
+Cześć! Wysyłam przegląd F1 {when}: co się zmieniło od ostatniego wyścigu, jak radzą sobie twoje zespoły i kierowcy i czego się spodziewać w ten weekend.
+Po kwalifikacjach — krótka wiadomość o tym, jak poszły ulubionym.
+Nowości w wątkach, które obserwujesz (kontrakty, transfery, plotki), przychodzą od razu, a w nocy (23:00–08:00) — rano.
+{next_digest}"""
+
+help = """
+Polecenia:
+/start — co potrafi bot i menu
+/stories — wątki, które obserwujesz, i ostatnie
+/story <numer> — historia wątku ze źródłami
+/follow <numer> — obserwuj wątek
+/unfollow <numer> — przestań obserwować (wątek zostaje w archiwum)
+/mute <numer> <dni> — bez powiadomień przez N dni
+/archive — wszystkie wątki, także zakończone
+/next — następny wyścig i kiedy przyjdzie przegląd
+/favourites — ulubione zespoły i kierowcy
+
+Wszystko to jest też na przyciskach: /start."""
+
+unknown_command = "Nie znam polecenia /{name}."
+
+# --- the next race and the digest -----------------------------------------------------------
+calendar_unavailable = "Kalendarz jest teraz niedostępny, spróbuj później."
+no_races = "W kalendarzu sezonu nie ma już wyścigów."
+no_digest_planned = "Następny przegląd — gdy w kalendarzu pojawi się nowy wyścig."
+next_digest_at = "Następny przegląd przyjdzie {when} czasu warszawskiego — na rundę «{race}»."
+next_digest_soon = "Przegląd na rundę «{race}» przyjdzie w ciągu godziny."
+digest_sent = "Przegląd na tę rundę wysłano {when}."
+digest_at = "Przegląd na tę rundę przyjdzie {when} czasu warszawskiego."
+digest_soon = "Przegląd na tę rundę przyjdzie w ciągu godziny."
+digest_not_sent = "Przeglądu na tę rundę nie wysłano."
+race_title = "Runda {round}: {name} ({season})"
+race_schedule = "Harmonogram, czas warszawski:"
+race_session = "{when} — {session}"
+race_session_unknown_time = "{day}, godzina do potwierdzenia"
+race_time_tbc = "{no_time} — godzina do potwierdzenia"
+race_source = "Źródło: {source}."
+
+# --- favourites -----------------------------------------------------------------------------
+favourites_title = "⭐ Ulubione — na ich podstawie powstaje przegląd."
+favourite_teams = "Zespoły: {names}"
+favourite_drivers = "Kierowcy: {names}"
+none = "brak"
+favourites_hint = "Usuń przyciskiem poniżej. Dodać można z wątku: po «Obserwuj» pojawi się przycisk «Obserwuj …»."
+remove_button = "✕ {name}"
+removed = "Usunięto z ulubionych: {name}. Przywrócić można w config.toml lub przyciskiem z wątku."
+already_removed = "{name} nie ma już w ulubionych."
+not_removed = "Nie udało się usunąć z ulubionych: {error}"
+answer_removed = "Usunięto"
+
+# --- stories --------------------------------------------------------------------------------
+no_stories = "Na razie nie ma wątków. Wszystkie wątki: /archive"
+following = "Obserwujesz:"
+following_none = "Nie obserwujesz jeszcze żadnego wątku."
+recent = "Ostatnie wątki:"
+muted_until = " (bez powiadomień do {date})"
+stories_hint = "Naciśnij wątek, aby otworzyć jego historię."
+story_line = "{title} — {status}, {date}"
+story_line_numbered = "#{id} {title} — {status}, {date}"
+
+archive_empty = "Archiwum jest puste: na razie nie ma wątków."
+archive_title = "Wszystkie wątki ({count}):"
+archive_followed = " — obserwujesz"
+archive_hint = "Więcej: /story <numer>"
+archive_caption = "Archiwum jako strona: otwórz plik w przeglądarce. Filtry: obserwuję / wszystkie / zakończone, każda aktualizacja ma link do źródła."
+
+story_title = "#{id} {title}"
+story_status = "Status: {status} · {following}"
+story_followed = "obserwujesz"
+story_not_followed = "nie obserwujesz"
+timeline = "Historia:"
+timeline_entry = "{date} — {headline} ({source})"
+status_change = "Status → {status}"
+
+story_number_missing = "Podaj numer wątku, np.: /{command} 3"
+story_unknown = "Nie ma wątku {arg}. Wszystkie wątki: /archive"
+
+followed = "Obserwujesz teraz wątek #{id} «{title}»."
+already_followed = "Już obserwujesz wątek #{id} «{title}»."
+unfollowed = "Nie obserwujesz już wątku #{id} «{title}». Zostaje w archiwum: /story {id}"
+not_followed = "Nie obserwujesz wątku #{id}."
+mute_days = "Podaj liczbę dni od 1 do {max}, np.: /mute {id} 7"
+mute_not_followed = "Nie obserwujesz wątku #{id}. Najpierw: /follow {id}"
+muted = "Wątek #{id} «{title}» bez powiadomień do {until}."
+
+button_follow = "Obserwuj"
+button_unfollow = "Przestań obserwować"
+button_timeline = "Historia"
+button_follow_entities = "Obserwuj {names}"
+button_mute_days = "Bez powiadomień przez {days}"
+
+added = "Dodano do ulubionych: {names}. Pojawią się w następnym przeglądzie."
+not_added = "Nie udało się dodać do ulubionych: {error}"
+
+answer_gone = "Tego przycisku już nie ma"
+answer_followed = "Obserwujesz"
+answer_unfollowed = "Nie obserwujesz"
+answer_muted = "Bez powiadomień"
+answer_already_favourite = "Już w ulubionych"
+answer_added = "Dodano"
+answer_failed = "Nie udało się"
+
+# --- story alerts and the offer to unfollow a quiet story -----------------------------------
+alert_title = "Nowość w wątku #{id} «{title}» ({status})"
+timeline_link = "Historia: /story {id}"
+alert_status_changed = "{chip} (status się zmienił)"
+stale_offer = """
+Wątek #{id} «{title}» ({status}): brak wiadomości od {days}, ostatnia aktualizacja — {date}.
+Przestać obserwować? Jeśli chcesz obserwować dalej, nic nie naciskaj: wiadomości będą przychodzić jak zwykle."""
+
+# --- the archive page -----------------------------------------------------------------------
+page_title = "F1 Brief — archiwum wątków"
+page_heading = "Archiwum wątków"
+page_generated = "Wygenerowano {when} (Warszawa) · wątków: {count}"
+page_footer = "Każda aktualizacja prowadzi do artykułu źródłowego. Plotki mają status «{rumor}»."
+page_following = "obserwujesz"
+page_muted_until = "bez powiadomień do {date}"
+page_updated = "zaktualizowano {date}"
+page_who = "Kto: {entities}"
+page_timeline = "Historia ({count})"
+page_filter_followed = "Obserwuję"
+page_filter_all = "Wszystkie"
+page_filter_resolved = "Zakończone"
+page_empty_followed = "Nie obserwujesz jeszcze żadnego wątku."
+page_empty_all = "Na razie nie ma wątków."
+page_empty_resolved = "Brak zakończonych wątków."

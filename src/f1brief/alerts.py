@@ -8,7 +8,7 @@ changed and the source as a short linked label. At most `MAX_PER_DAY` alerts go 
 per Warsaw calendar day, and none in the quiet hours (23:00-08:00 Warsaw): those wait for the
 first run after them, the oldest first. Updates of a muted story are skipped, not saved for
 later, and so is an update that has waited longer than `STALE_AFTER` (the digest's
-"Твои сюжеты" covers both).
+stories section covers both). Alerts are in the bot's language (F30, `bot_texts`).
 
 An alert is recorded as sent before it is sent, so it goes out at most once; one Telegram
 refuses outright is made to wait again. `plan` decides, `deliver` sends and records; the clock
@@ -20,18 +20,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-from f1brief import bot_texts as texts
 from f1brief import telegram_html as th
-from f1brief.bot import (
-    STORY,
-    UNFOLLOW,
-    BotError,
-    Button,
-    Reply,
-    html_replies,
-    source_line,
-    status_chip,
-)
+from f1brief.bot import STORY, UNFOLLOW, BotError, Button, Reply, html_replies, source_line
+from f1brief.bot_texts import ICON_ALERT, texts_for
+from f1brief.messages import DEFAULT_LANGUAGE
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore, StoryUpdate
 
@@ -102,14 +94,15 @@ def plan(store: StoryStore, now: datetime, max_per_day: int = MAX_PER_DAY) -> Pl
     return Plan(tuple(alerts[:room]), tuple(alerts[room:]), tuple(skip), quiet)
 
 
-def blocks(alert: Alert) -> list[th.Block]:
+def blocks(alert: Alert, language: str = DEFAULT_LANGUAGE) -> list[th.Block]:
+    texts = texts_for(language)
     story = alert.story
-    chip = status_chip(story.status)
+    chip = texts.status_chip(story.status)
     if any(entry.status for entry in alert.updates):
-        chip = texts.ALERT_STATUS_CHANGED.format(chip=chip)
+        chip = texts.alert_status_changed.format(chip=chip)
     head = th.Block(
         (
-            th.Line((th.Span(f"{texts.ICON_ALERT} "), th.Span(story.title, bold=True))),
+            th.Line((th.Span(f"{ICON_ALERT} "), th.Span(story.title, bold=True))),
             th.plain(chip),
         )
     )
@@ -120,21 +113,22 @@ def blocks(alert: Alert) -> list[th.Block]:
     return [head, th.Block(lines)]
 
 
-def text(alert: Alert) -> str:
+def text(alert: Alert, language: str = DEFAULT_LANGUAGE) -> str:
     """The alert's first message, as Telegram HTML."""
-    return replies(alert)[0].text
+    return replies(alert, language)[0].text
 
 
-def replies(alert: Alert) -> list[Reply]:
+def replies(alert: Alert, language: str = DEFAULT_LANGUAGE) -> list[Reply]:
     """The alert's messages (one unless it is long); the last carries the buttons."""
+    texts = texts_for(language)
     story_id = alert.story.id
     buttons = (
         (
-            Button(texts.BUTTON_TIMELINE, f"{STORY}:{story_id}"),
-            Button(texts.BUTTON_UNFOLLOW, f"{UNFOLLOW}:{story_id}"),
+            Button(texts.button_timeline, f"{STORY}:{story_id}"),
+            Button(texts.button_unfollow, f"{UNFOLLOW}:{story_id}"),
         ),
     )
-    return html_replies(blocks(alert), buttons, menu=False)
+    return html_replies(blocks(alert, language), buttons)
 
 
 def _warn(message: str) -> None:
@@ -147,6 +141,7 @@ def deliver(
     now: datetime,
     send: Callable[[Reply], None],
     warn: Callable[[str], None] = _warn,
+    language: str = DEFAULT_LANGUAGE,
 ) -> bool:
     """Records the skipped updates, then sends the planned alerts in order. When Telegram
     refuses one, the rest wait for the next run; the refused one waits too unless part of
@@ -157,7 +152,7 @@ def deliver(
         store.record_alert(alert.updates, sent=True, now=now)
         delivered = 0
         try:
-            for reply in replies(alert):
+            for reply in replies(alert, language):
                 send(reply)
                 delivered += 1
         except BotError as exc:
