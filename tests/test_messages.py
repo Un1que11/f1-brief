@@ -295,10 +295,11 @@ def test_next_in_polish_names_the_sessions_and_the_back_button(
     store: StoryStore, races: list[schedule.Race]
 ) -> None:
     [reply] = handler(store, "pl", races).handle(message("/next"), NOW)
-    assert reply.text.splitlines()[0] == "🏁 Runda 18: United States Grand Prix (2026)"
-    assert "Harmonogram (czas warszawski):" in reply.text
-    assert "pt. 23.10 19:30 — Trening 1" in reply.text
-    assert "niedz. 25.10 21:00 — Wyścig" in reply.text  # after the clocks went back
+    # The F41 card: a bold header and the sessions as an aligned <pre> table.
+    assert reply.text.splitlines()[0] == "🏁 <b>Runda 18: United States Grand Prix (2026)</b>"
+    assert "Harmonogram, czas warszawski:" in reply.text
+    assert "pt. 23.10 19:30  Trening 1" in reply.text
+    assert "niedz. 25.10 21:00  Wyścig" in reply.text  # after the clocks went back
     assert reply.buttons[-1] == (bot.Button("← Menu", "menu:main"),)
 
 
@@ -308,8 +309,8 @@ def test_a_story_timeline_and_its_buttons_in_english(store: StoryStore) -> None:
     assert text_of(actions).startswith(f"You now follow story #{story.id} «")
     actions = handler(store, "en", []).handle(press(f"story:{story.id}"), NOW)
     text = text_of(actions)
-    assert "Status: rumour · you follow it" in text
-    assert "Timeline:" in text
+    assert "Status: 🟡 rumour · you follow it" in text
+    assert "<b>Timeline:</b>" in text
     labels = [b.text for r in actions if isinstance(r, Reply) for row in r.buttons for b in row]
     assert labels[:2] == ["Unfollow", "No notifications for 7 days"]
 
@@ -332,9 +333,10 @@ def test_an_alert_in_english(store: StoryStore) -> None:
     store.add_update(story.id, _update(2), NOW, None)
     [alert] = alerts.plan(store, NOW).send
     [reply] = alerts.replies(alert, "en")
-    assert reply.text.startswith(f"New in story #{story.id} «")
-    assert reply.text.endswith(f"Timeline: /story {story.id}")
-    assert [[b.text for b in row] for row in reply.buttons] == [["Unfollow"]]
+    # The F41 alert card: icon and bold title, the status chip, the change with its source.
+    assert reply.text.startswith(f"🔔 <b>{story.title}</b>\n🟡 rumour\n")
+    assert '<a href="https://example.com/story-2">' in reply.text
+    assert [[b.text for b in row] for row in reply.buttons] == [["Timeline", "Unfollow"]]
 
 
 def test_the_offer_to_unfollow_in_polish(store: StoryStore) -> None:
@@ -387,7 +389,7 @@ def test_the_cli_bot_answers_in_the_configured_language(
     assert main(["bot", "--dry-run", "--updates", str(updates), "--chat-id", CHAT]) == 0
     out = capsys.readouterr().out
     assert "Commands:" in out
-    assert "/story <number> — a story's timeline with sources" in out
+    assert "/story &lt;number&gt; — a story's timeline with sources" in out  # HTML-escaped
 
 
 def _update(n: int):

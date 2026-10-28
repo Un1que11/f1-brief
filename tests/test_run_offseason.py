@@ -3,6 +3,7 @@
 
 # The summary is Russian: Cyrillic letters that look like Latin ones are intended here.
 # ruff: noqa: RUF001
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,19 @@ from f1brief.send_log import SendLog, Status
 
 DUE = datetime(2026, 1, 3, 8, tzinfo=UTC)  # Sat 3 Jan: off-season, early in the month
 NOT_DUE = datetime(2025, 12, 20, 8, tzinfo=UTC)  # mid-month: news is only archived
-SUMMARY = "1. Переходы\nНичего нового."
+SUMMARY = json.dumps(
+    {
+        "title": "Межсезонье",
+        "sections": [
+            {
+                "id": "moves",
+                "heading": "Переходы",
+                "items": [{"text": "Ничего нового.", "unknown": True}],
+            }
+        ],
+    },
+    ensure_ascii=False,
+)
 
 
 def news_item(title: str, link: str, published: datetime) -> NewsItem:
@@ -95,7 +108,9 @@ def test_sends_the_summary_once_a_month(setup, capsys: pytest.CaptureFixture[str
     stubs.news = [LATE]
 
     assert main(["run"]) == 0
-    assert recorder.texts() == ["*1\\. Переходы*\nНичего нового\\."]
+    assert recorder.texts() == [
+        "🗓 <b>Межсезонье</b>\n01.12.2025–03.01.2026\n\n<b>🔄 Переходы</b>\n• Ничего нового."
+    ]
     saved = summary()
     assert saved is not None and (saved.status, saved.messages) == (Status.SENT, 1)
     err = capsys.readouterr().err
@@ -257,7 +272,10 @@ def test_summary_writes_the_prompt_on_any_day(
 def test_summary_writes_the_text(setup, tmp_path: Path) -> None:
     stubs, recorder = setup
     assert main(["summary", "--output", "summary.txt"]) == 0
-    assert (tmp_path / "summary.txt").read_text(encoding="utf-8") == SUMMARY + "\n"
+    card = json.loads((tmp_path / "summary.txt").read_text(encoding="utf-8"))
+    assert (card["kind"], card["title"]) == ("summary", "Межсезонье")
+    [section] = card["sections"]
+    assert section["items"] == [{"text": "Ничего нового.", "sources": [], "unknown": True}]
     assert len(stubs.documents) == 1
     assert recorder.requests == []
     assert stubs.languages == ["ru"]

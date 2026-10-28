@@ -92,20 +92,22 @@ uv run f1brief track             # favourites at the next race's circuit, last 3
 uv run f1brief news --days 7     # news about the favourites and key topics (RSS)
 uv run f1brief weather           # forecast at the circuit for the next race weekend
 uv run f1brief facts --output facts.json   # every fact above as one JSON, with sources
-uv run f1brief digest                      # the digest text, written by `claude -p`
+uv run f1brief digest --output digest.json # the digest as a card (JSON), written by `claude -p`
 uv run f1brief digest --facts facts.json --prompt-only   # the exact prompt, without claude
-uv run f1brief format --input digest.txt   # the digest as Telegram MarkdownV2 messages
-uv run f1brief send --input digest.txt --dry-run   # what would be sent, without sending
-uv run f1brief send --input digest.txt     # send the digest to the Telegram chat
+uv run f1brief format --input digest.json  # the card as Telegram HTML messages
+uv run f1brief send --input digest.json --dry-run   # what would be sent, without sending
+uv run f1brief send --input digest.json    # send the digest to the Telegram chat
+uv run f1brief preview --kind digest       # a sample digest|quali|alert|summary, printed
+uv run f1brief preview --kind alert --send # the same, sent to the admin chat to see the look
 uv run f1brief due                         # is it time to send the next round's digest?
 uv run f1brief run --dry-run               # the daily job, printing instead of sending
 uv run f1brief run                         # the daily job: when due, write and send, once
 uv run f1brief forget --season 2026 --round 18   # allow `run` to send that round again
 uv run f1brief summary --prompt-only       # the off-season monthly summary's prompt, today
-uv run f1brief summary                     # the monthly summary text (never sent)
+uv run f1brief summary                     # the monthly summary card (never sent)
 uv run f1brief forget --month 2027-01      # allow `run` to send that month's summary again
 uv run f1brief quali --round 17 --prompt-only   # the prompt of the message after qualifying
-uv run f1brief quali                       # that message for the current weekend (never sent)
+uv run f1brief quali                       # that message's card for this weekend (never sent)
 uv run f1brief forget --season 2026 --round 18 --qualifying   # allow it to be sent again
 uv run f1brief detect-stories --dry-run   # what claude makes of the new hot news items
 uv run f1brief seed-stories --dry-run     # what claude makes of the articles in story_seeds.toml
@@ -124,12 +126,30 @@ nothing else; `claude` runs without tools, MCP servers or user settings, so the 
 those facts. `--model` picks the model (default: claude's own), `--facts` reuses a saved
 document instead of collecting again.
 
-`format` turns a digest text into the messages that will be sent to Telegram: MarkdownV2 with
-every special character escaped and the section headings in bold, split at paragraph, line or
-word boundaries so that no message is longer than 4096 characters (`--limit` to try a smaller
-one). It reads stdin by default, so `f1brief digest | f1brief format` works too.
+Claude answers with structured JSON, not prose: sections of short items, each with the sources
+it came from (`name` and `url`, copied from the facts). Before anything is saved or sent, a
+source that does not appear in the facts document is dropped, and so is an item left without
+one, unless it only says that something is unknown; each drop is a warning on stderr. Code adds
+what it knows better than the model: the weekend's dates and the session schedule in Warsaw
+time. The result is a **card**, which `digest`, `summary` and `quali` print (or save with
+`--output`) as JSON.
 
-`send` formats a digest text the same way and sends each message to the chat through the
+`format` turns a saved card into the messages that will be sent to Telegram, in Telegram HTML
+(`parse_mode=HTML`; names and headlines are escaped, link previews are off): a header line
+(`🏁 <b>…</b>` and the dates), the schedule as an aligned `<pre>` table, each section under a
+bold heading with one emoji, items as `•` bullets with the key number in bold and the sources
+as short linked labels at the end (`<a href="…">Jolpica-F1</a>`). A long section (usually the
+news) is folded into an expandable quote. Messages are split between sections, then items,
+then words, never inside a tag or an entity, so none is longer than 4096 characters
+(`--limit` to try a smaller one), and a heading always stays with its first item. It reads
+stdin by default, so `f1brief digest | f1brief format` works too.
+
+`preview --kind digest|quali|alert|summary` prints a sample of each message from the sample
+cards in `src/f1brief/samples/` (synthetic text with example links), rendered the way `run`
+renders a real one; `--send` sends it to the admin chat (`TELEGRAM_CHAT_ID`, the only chat for
+now), to check the look in Telegram itself.
+
+`send` renders a saved card the same way and sends each message to the chat through the
 Telegram Bot API, in order, stopping at the first one Telegram refuses. It needs the bot token
 and the chat id: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the environment, or copy
 `.env.example` to `.env` (git-ignored) and fill it in; `--env-file` points somewhere else.
@@ -198,7 +218,9 @@ articles about Bearman replacing Hamilton at Ferrari; run `uv run f1brief seed-s
 (`--dry-run` to see claude's decision first, `--prompt-only` for the prompt).
 
 Story alerts (F24): when a followed story gets an update (recorded after it was followed),
-`f1brief alerts` sends a short message with what changed, the source and an "Отписаться" button;
+`f1brief alerts` sends a short card: `🔔` and the story's title in bold, its status chip
+(`🟡 слух`, `🟠 развивается`, `🟢 подтверждено`, `🔴 опровергнуто`), one line per update with
+what changed and the source as a linked label, and the buttons «Хронология» and «Отписаться»;
 a story's waiting updates go in one message. At most 3 alerts per Warsaw calendar day and none
 from 23:00 to 08:00 Warsaw: the rest wait for a later run, the oldest first. Updates of a muted
 story, and updates that have waited more than 3 days, are skipped (the digest covers them).

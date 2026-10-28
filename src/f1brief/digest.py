@@ -1,4 +1,7 @@
-"""The digest text, written by headless Claude Code (`claude -p`) from the facts document alone.
+"""The digest, written by headless Claude Code (`claude -p`) from the facts document alone.
+
+Claude answers with structured JSON (sections of items, each with its sources); `cards` checks
+the sources against the facts document and renders the result for Telegram (F41).
 
 The prompt is a fixed template (`prompts/<language>/digest.md`; `summary.md` for the
 off-season monthly summary; `qualifying.md` for the message after qualifying) with the facts

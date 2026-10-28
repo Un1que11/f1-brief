@@ -24,6 +24,7 @@ from f1brief.bot import UNFOLLOW, BotError, Button, Reply
 from f1brief.bot_texts import texts_for
 from f1brief.messages import DEFAULT_LANGUAGE
 from f1brief.stories import Story, StoryStore
+from f1brief.telegram_html import escape
 
 QUIET_AFTER = timedelta(days=60)
 
@@ -78,8 +79,9 @@ def text(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
 
 
 def reply(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE) -> Reply:
+    """The offer as one Telegram HTML message (the text escaped) with the unfollow button."""
     button = Button(texts_for(language).button_unfollow, f"{UNFOLLOW}:{offer.story.id}")
-    return Reply(text(offer, now, language), ((button,),))
+    return Reply(escape(text(offer, now, language)), ((button,),))
 
 
 def _warn(message: str) -> None:

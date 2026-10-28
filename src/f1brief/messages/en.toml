@@ -90,10 +90,11 @@ digest_sent = "The digest for this round was sent {when}."
 digest_at = "The digest for this round comes {when} Warsaw time."
 digest_soon = "The digest for this round comes within the hour."
 digest_not_sent = "No digest was sent for this round."
-race_title = "🏁 Round {round}: {name} ({season})"
-race_schedule = "Schedule (Warsaw time):"
+race_title = "Round {round}: {name} ({season})"
+race_schedule = "Schedule, Warsaw time:"
 race_session = "{when} — {session}"
 race_session_unknown_time = "{day}, time to be confirmed"
+race_time_tbc = "{no_time} — time to be confirmed"
 race_source = "Source: {source}."
 
 # --- favourites -----------------------------------------------------------------------------
@@ -145,6 +146,7 @@ muted = "Story #{id} «{title}»: no notifications until {until}."
 
 button_follow = "Follow"
 button_unfollow = "Unfollow"
+button_timeline = "Timeline"
 button_follow_entities = "Follow {names}"
 button_mute_days = "No notifications for {days}"
 
@@ -162,6 +164,7 @@ answer_failed = "That didn't work"
 # --- story alerts and the offer to unfollow a quiet story -----------------------------------
 alert_title = "New in story #{id} «{title}» ({status})"
 timeline_link = "Timeline: /story {id}"
+alert_status_changed = "{chip} (status changed)"
 stale_offer = """
 Story #{id} «{title}» ({status}): no news for {days}, last update {date}.
 Unfollow? To keep following, don't press anything: its news will come as usual."""

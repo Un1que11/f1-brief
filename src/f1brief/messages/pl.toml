@@ -91,10 +91,11 @@ digest_sent = "Przegląd na tę rundę wysłano {when}."
 digest_at = "Przegląd na tę rundę przyjdzie {when} czasu warszawskiego."
 digest_soon = "Przegląd na tę rundę przyjdzie w ciągu godziny."
 digest_not_sent = "Przeglądu na tę rundę nie wysłano."
-race_title = "🏁 Runda {round}: {name} ({season})"
-race_schedule = "Harmonogram (czas warszawski):"
+race_title = "Runda {round}: {name} ({season})"
+race_schedule = "Harmonogram, czas warszawski:"
 race_session = "{when} — {session}"
 race_session_unknown_time = "{day}, godzina do potwierdzenia"
+race_time_tbc = "{no_time} — godzina do potwierdzenia"
 race_source = "Źródło: {source}."
 
 # --- favourites -----------------------------------------------------------------------------
@@ -146,6 +147,7 @@ muted = "Wątek #{id} «{title}» bez powiadomień do {until}."
 
 button_follow = "Obserwuj"
 button_unfollow = "Przestań obserwować"
+button_timeline = "Historia"
 button_follow_entities = "Obserwuj {names}"
 button_mute_days = "Bez powiadomień przez {days}"
 
@@ -163,6 +165,7 @@ answer_failed = "Nie udało się"
 # --- story alerts and the offer to unfollow a quiet story -----------------------------------
 alert_title = "Nowość w wątku #{id} «{title}» ({status})"
 timeline_link = "Historia: /story {id}"
+alert_status_changed = "{chip} (status się zmienił)"
 stale_offer = """
 Wątek #{id} «{title}» ({status}): brak wiadomości od {days}, ostatnia aktualizacja — {date}.
 Przestać obserwować? Jeśli chcesz obserwować dalej, nic nie naciskaj: wiadomości będą przychodzić jak zwykle."""

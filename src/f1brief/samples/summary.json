@@ -1,0 +1,64 @@
+{
+  "kind": "summary",
+  "language": "ru",
+  "title": "Межсезонье: декабрь (образец)",
+  "subtitle": "01–31.12.2026",
+  "schedule": [],
+  "sections": [
+    {
+      "id": "moves",
+      "heading": "Переходы",
+      "items": [
+        {
+          "text": "Пример: команда продлила контракт пилота до **2028** года.",
+          "sources": [
+            {
+              "name": "BBC Sport",
+              "url": "https://example.com/sample/contract"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "testing",
+      "heading": "Тесты и презентации",
+      "items": [
+        {
+          "text": "Пример: презентация новой машины назначена на **12 февраля**.",
+          "sources": [
+            {
+              "name": "The Race",
+              "url": "https://example.com/sample/launch"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "favourites",
+      "heading": "Избранное",
+      "items": [
+        {
+          "text": "О Haas новостей за месяц не было.",
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "id": "next_season",
+      "heading": "Следующий сезон",
+      "items": [
+        {
+          "text": "Старт — **Гран-при Австралии**, 08.03.2027.",
+          "sources": [
+            {
+              "name": "Jolpica-F1",
+              "url": "https://api.jolpi.ca/ergast/f1/2027.json?limit=100"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

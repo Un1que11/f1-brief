@@ -127,13 +127,18 @@ def test_template_states_the_rules() -> None:
 
     assert "Write the digest in Russian." in text
     assert "Use only the facts in the document above." in text
-    assert "Every point names its source" in text
-    assert "say plainly that it is\n   unknown. Never guess" in text
-    sections = re.findall(r"^(\d)\. ", text.split("## Digest structure")[1], re.MULTILINE)
+    assert "Every point names its sources" in text
+    assert 'say plainly that it is\n   unknown, in an item with `"unknown": true`' in text
+    assert "Never guess or fill the gap." in text
+    structure = text.split("## Digest structure")[1].split("## Output")[0]
+    sections = re.findall(r"^(\d)\. ", structure, re.MULTILINE)
     assert sections == ["1", "2", "3", "4", "5", "6", "7", "8"]
+    ids = re.findall(r"^\d\. `([a-z_:<>]+)`", structure, re.MULTILINE)
+    assert ids == ["race", "standings", "team:<team_id>", "drivers", "track", "weather", "expect"]
     assert "5. «Твои сюжеты», with exactly that heading (`stories`)" in text
     assert "`rumor` is a rumour" in text
-    assert "a story update names its `source` and gives its `link`" in text
+    assert "for a story update, its `source` and its `link`" in text
+    assert "Only one JSON object" in text
 
 
 def test_a_news_title_cannot_close_the_facts_block() -> None:
@@ -312,23 +317,51 @@ def test_cli_writes_the_digest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     models: list[str | None] = []
+    answer = {
+        "title": "Гран-при",
+        "sections": [
+            {
+                "id": "weather",
+                "heading": "Погода",
+                "items": [{"text": "Прогноза пока нет.", "unknown": True}],
+            }
+        ],
+    }
 
     def fake_generate(document: dict[str, Any], model: digest.ClaudeCli, language: str) -> str:
         assert document == STUB
         assert language == "ru"
         models.append(model.model)
-        return "Дайджест"
+        return json.dumps(answer, ensure_ascii=False)
 
     monkeypatch.setattr(digest, "generate", fake_generate)
-    target = tmp_path / "digest.txt"
+    target = tmp_path / "digest.json"
 
+    # The digest is saved as a card (F41): `format` and `send` read it back.
     assert main(["digest", "--facts", str(saved), "--output", str(target)]) == 0
-    assert target.read_text(encoding="utf-8") == "Дайджест\n"
+    card = json.loads(target.read_text(encoding="utf-8"))
+    assert (card["kind"], card["language"], card["title"]) == ("digest", "ru", "Гран-при")
+    assert card["sections"][0]["items"][0] == {
+        "text": "Прогноза пока нет.",
+        "sources": [],
+        "unknown": True,
+    }
     assert capsys.readouterr().err == "warning: no weather facts: beyond the forecast range\n"
 
     assert main(["digest", "--facts", str(saved), "--model", "opus"]) == 0
-    assert capsys.readouterr().out == "Дайджест\n"
+    assert json.loads(capsys.readouterr().out) == card
     assert models == [None, "opus"]
+
+
+def test_cli_rejects_an_answer_that_is_not_a_card(
+    saved: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(digest, "generate", lambda document, model, language: "1. Раунд")
+
+    assert main(["digest", "--facts", str(saved)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error: claude's digest answer: the answer holds no JSON object" in captured.err
 
 
 def test_cli_collects_when_no_document_is_given(

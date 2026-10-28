@@ -1,7 +1,7 @@
 """The daily job (`f1brief run`), `due` and `forget`: every Telegram request goes to a mock."""
 
 # The digest is Russian: Cyrillic letters that look like Latin ones are intended here.
-# ruff: noqa: RUF001
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +17,22 @@ from f1brief.send_log import SendLog, Status
 
 IN_WINDOW = datetime(2026, 10, 21, 8, 0, tzinfo=UTC)  # Wed, round 18's window is open
 TOO_EARLY = datetime(2026, 10, 16, 6, 0, tzinfo=UTC)
-TWO_PARTS = "1. Раунд\nОстин.\n\n7. Чего ожидать\nДождь."
+# claude's answer: a card (F41). The stub facts have no sources, so every item says what is
+# unknown, which needs none.
+TWO_PARTS = json.dumps(
+    {
+        "title": "Гран-при США",
+        "sections": [
+            {"id": "race", "heading": "Раунд", "items": [{"text": "Остин.", "unknown": True}]},
+            {
+                "id": "expect",
+                "heading": "Чего ожидать",
+                "items": [{"text": "Дождь.", "unknown": True}],
+            },
+        ],
+    },
+    ensure_ascii=False,
+)
 
 
 def facts_about(season: int, round_: int) -> dict[str, Any]:
@@ -73,7 +88,10 @@ def test_sends_once_when_due(setup, capsys: pytest.CaptureFixture[str]) -> None:
 
     assert main(["run"]) == 0
     assert len(recorder.requests) == 1
-    assert recorder.texts()[0].startswith("*1\\. Раунд*")
+    assert recorder.texts()[0] == (
+        "🏁 <b>Гран-при США</b>\nЭтап 18\n\n"  # noqa: RUF001
+        "<b>🗓 Раунд</b>\n• Остин.\n\n<b>🔮 Чего ожидать</b>\n• Дождь."
+    )
     saved = record()
     assert saved is not None and (saved.status, saved.messages) == (Status.SENT, 1)
     err = capsys.readouterr().err
@@ -187,12 +205,51 @@ def test_a_refused_first_message_can_be_retried(
     assert len(recorder.requests) == 1
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "1. Round\nAustin.",  # not a card at all
+        json.dumps(  # every item's source is made up, so nothing is left
+            {
+                "title": "Гран-при",
+                "sections": [
+                    {
+                        "id": "race",
+                        "heading": "Раунд",
+                        "items": [
+                            {"text": "x", "sources": [{"name": "X", "url": "https://x.test"}]}
+                        ],
+                    }
+                ],
+            }
+        ),
+    ],
+)
+def test_an_answer_that_is_not_a_usable_card_claims_nothing(
+    setup, answer: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pipeline, recorder = setup
+    pipeline.text = answer
+
+    assert main(["run"]) == 1
+    assert recorder.requests == []
+    assert record() is None  # not claimed: the next run tries again
+    assert "error: claude's digest answer: " in capsys.readouterr().err
+
+    pipeline.text = TWO_PARTS
+    assert main(["run"]) == 0
+    assert len(recorder.requests) == 1
+
+
 def test_a_failure_after_the_first_message_is_never_resent(
     setup, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     pipeline, _ = setup
     # Two messages: the first one goes through, the second one is refused.
-    pipeline.text = "1. Раунд\n" + "Остин. " * 700
+    long = {"text": "Остин. " * 700, "unknown": True}
+    pipeline.text = json.dumps(
+        {"title": "Гран-при", "sections": [{"id": "race", "heading": "Раунд", "items": [long]}]}
+    )
     recorder = Recorder(httpx.Response(200, json=OK), httpx.Response(400, json=PARSE_ERROR))
     monkeypatch.setattr(cli, "_telegram_client", recorder.client)
     monkeypatch.setattr(
