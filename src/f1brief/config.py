@@ -1,9 +1,11 @@
-"""Settings from `config.toml`: favourites, digest language, send lead time and time zone.
+"""Settings from `config.toml`: favourites, digest language, send lead time, time zone and
+the story alerts' daily cap and quiet hours.
 
 The file is optional. Without it every setting has the default below, which matches the
 checked-in `config.toml`; a file that exists but is malformed is an error, never ignored.
-The bot (F23) appends favourites to it with `add_favourites` when asked to follow a story's
-teams and drivers, and removes one with `remove_favourite` (F40).
+Since F32 these are the defaults of every account (`users`): an account's own changes, made
+from the bot, live in the state file. `add_favourites` and `remove_favourite` edit the file
+itself, keeping its comments; the bot no longer calls them.
 """
 
 import json
@@ -12,6 +14,7 @@ import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import time
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -19,7 +22,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 DEFAULT_PATH = Path("config.toml")
 
 LANGUAGES = ("ru", "en", "pl")  # languages that have prompts (src/f1brief/prompts/<language>)
-TIMEZONES = ("Europe/Warsaw",)  # zones the code handles; schedule.WARSAW is used directly
 
 
 class ConfigError(Exception):
@@ -88,6 +90,11 @@ class Config:
     language: str = "ru"
     days_before_fp1: int = 2
     timezone: str = "Europe/Warsaw"
+    # Story alerts (F24): at most this many a day, none from quiet_start to quiet_end (local
+    # wall-clock time; equal times mean no quiet hours).
+    max_alerts_per_day: int = 3
+    quiet_start: time = time(23)
+    quiet_end: time = time(8)
     source: Path | None = field(default=None, compare=False)  # the file it was read from
 
     @property
@@ -119,7 +126,7 @@ def load(path: str | Path | None = None) -> Config:
 
 def parse(data: Mapping[str, Any], source: Path | None = None) -> Config:
     """Validate an already-decoded TOML document. Missing keys take their defaults."""
-    _no_unknown(data, ("digest", "favourites"), "top level")
+    _no_unknown(data, ("digest", "favourites", "alerts"), "top level")
     digest = _table(data, "digest")
     _no_unknown(digest, ("language", "days_before_fp1", "timezone"), "[digest]")
     defaults = Config()
@@ -139,11 +146,14 @@ def parse(data: Mapping[str, Any], source: Path | None = None) -> Config:
         ZoneInfo(timezone)
     except (ZoneInfoNotFoundError, ValueError):
         raise ConfigError(f"digest.timezone: unknown time zone {timezone!r}") from None
-    if timezone not in TIMEZONES:
-        # Accepting another zone would be silently ignored: the code still uses Warsaw time.
-        raise ConfigError(
-            f"digest.timezone: {timezone!r} is not supported yet (supported: Europe/Warsaw)"
-        )
+
+    alerts = _table(data, "alerts")
+    _no_unknown(alerts, ("max_per_day", "quiet_start", "quiet_end"), "[alerts]")
+    cap = _get(alerts, "max_per_day", int, "alerts.max_per_day", defaults.max_alerts_per_day)
+    if cap < 0:
+        raise ConfigError("alerts.max_per_day: must be a whole number, 0 or more")
+    quiet_start = _clock(alerts, "quiet_start", defaults.quiet_start)
+    quiet_end = _clock(alerts, "quiet_end", defaults.quiet_end)
 
     favourites = defaults.favourites
     if "favourites" in data:
@@ -153,7 +163,19 @@ def parse(data: Mapping[str, Any], source: Path | None = None) -> Config:
             teams=_favourites(table, "teams", defaults.favourites.teams),
             drivers=_favourites(table, "drivers", defaults.favourites.drivers),
         )
-    return Config(favourites, language, days, timezone, source)
+    return Config(favourites, language, days, timezone, cap, quiet_start, quiet_end, source)
+
+
+_CLOCK = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
+
+
+def _clock(table: Mapping[str, Any], key: str, default: time) -> time:
+    # "23:00": TOML's own local time (23:00:00) would also do, but a string reads plainer.
+    value = _get(table, key, str, f"alerts.{key}", default.strftime("%H:%M"))
+    match = _CLOCK.fullmatch(value)
+    if match is None:
+        raise ConfigError(f"alerts.{key}: {value!r} is not a time of day (HH:MM, 24-hour)")
+    return time(int(match.group(1)), int(match.group(2)))
 
 
 def _favourites(

@@ -34,7 +34,8 @@ from f1brief.story_texts import Localized
 # 2 (F20): favourites from the config (several teams), `team_form.teams`, shared teammate
 # head-to-heads in `drivers`, `favourite_teams_points` in `track`, news `future`.
 # 3 (F25): `stories`, the followed stories and their updates since the last digest.
-SCHEMA_VERSION = 3
+# 4 (F32): times in the reader's zone (`timezone`): `start_warsaw` is now `start_local`.
+SCHEMA_VERSION = 4
 NEWS_DAYS = 7
 # How far back `stories` looks when no digest has been sent yet.
 STORIES_DAYS = 14
@@ -115,7 +116,7 @@ def race_facts(race: Race, tz: tzinfo = WARSAW) -> dict[str, Any]:
                 "session": s.kind.value,
                 "date": _day(s.date),
                 # null while the start time is to be confirmed; only the date is known then.
-                "start_warsaw": _time(s.start_utc, tz),
+                "start_local": _time(s.start_utc, tz),
             }
             for s in race.sessions
         ],
@@ -391,7 +392,7 @@ def news_facts(report: news.NewsReport) -> dict[str, Any]:
     }
 
 
-def weather_facts(forecast: weather.WeekendForecast) -> dict[str, Any]:
+def weather_facts(forecast: weather.WeekendForecast, tz: tzinfo = WARSAW) -> dict[str, Any]:
     return {
         "circuit_timezone": forecast.timezone,
         "days": [
@@ -409,7 +410,7 @@ def weather_facts(forecast: weather.WeekendForecast) -> dict[str, Any]:
         "sessions": [
             {
                 "session": s.kind.value,
-                "start_warsaw": _time(s.start_utc),
+                "start_local": _time(s.start_utc, tz),
                 "forecast_hour_local": s.hour_local.isoformat(),
                 "description": s.description,
                 "temperature_c": s.temperature,
@@ -537,8 +538,10 @@ def collect(
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] | None = None,
     stories: Callable[[], dict[str, Any]] | None = None,
+    tz: tzinfo = WARSAW,
 ) -> dict[str, Any]:
-    """Fetches every section for the next race weekend and returns the facts document.
+    """Fetches every section for the next race weekend and returns the facts document, with
+    times in `tz` (the reader's time zone).
 
     A section that fails is `null` and listed in `missing`; the others are still collected.
     `stories` builds the `stories` section from the state file (see `stories_facts`); without
@@ -577,7 +580,7 @@ def collect(
             race = schedule.next_race(schedule.fetch_schedule(client=client), now)
             if race is None:
                 raise schedule.ScheduleError("no upcoming race in the current season's calendar")
-            return race_facts(race)
+            return race_facts(race, tz)
 
         section("race", next_race)
         upcoming = race
@@ -636,7 +639,7 @@ def collect(
             ),
         )
         if upcoming is not None:
-            section("weather", lambda: weather_facts(weather.fetch_forecast(upcoming, client)))
+            section("weather", lambda: weather_facts(weather.fetch_forecast(upcoming, client), tz))
     finally:
         client.event_hooks["request"].remove(recorder)
         if owns_client:
@@ -644,8 +647,8 @@ def collect(
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": now.astimezone(WARSAW).isoformat(),
-        "timezone": str(WARSAW),
+        "generated_at": now.astimezone(tz).isoformat(),
+        "timezone": str(tz),
         "favourites": favourites_facts(favourites),
         "sections": {name: sections[name] for name in SECTIONS},
         "missing": missing,

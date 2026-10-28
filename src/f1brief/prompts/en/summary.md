@@ -28,7 +28,7 @@ Telegram.
    whose `names` has a `en` form is always called by that form. News items with
    `future: true` are about the future in F1 (contract, moves) of a favourite driver with
    `track_future: true`.
-7. The period the summary covers is `period` (Warsaw dates); it is shown under the title, so
+7. The period the summary covers is `period` (dates in the document's `timezone`); it is shown under the title, so
    do not repeat it.
 8. Each item is one point of one or two short sentences. Put its key number or name in bold
    with double asterisks (`**<year>**`); use no other markup, no Markdown and no HTML.
@@ -42,7 +42,7 @@ number and no emoji: they are added later):
    topic).
 2. `testing`: testing and launches: tests, shakedowns and car launches (the `testing` topic).
 3. `favourites`: other news about the favourite teams and drivers.
-4. `next_season`: when and where the next season starts (`season_start`), in Warsaw time.
+4. `next_season`: when and where the next season starts (`season_start`), in the document's `timezone`.
 
 ## Output
 

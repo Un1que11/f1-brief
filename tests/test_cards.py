@@ -220,7 +220,7 @@ def test_the_round_label_follows_the_language(
 
 
 def test_a_header_without_round_or_circuit_keeps_the_dates() -> None:
-    race = {"sessions": [{"session": "Race", "date": "2026-10-25", "start_warsaw": None}]}
+    race = {"sessions": [{"session": "Race", "date": "2026-10-25", "start_local": None}]}
     document = {"sections": {"race": race}}
     assert cards.header(cards.DIGEST, document, "ru")[0] == "25.10.2026"
 
@@ -236,7 +236,7 @@ def test_a_header_without_round_or_circuit_keeps_the_dates() -> None:
 def test_a_session_without_a_time_is_marked_in_each_language(
     language: str, row: tuple[str, str], label: str
 ) -> None:
-    race = {"sessions": [{"session": "FP1", "date": "2026-10-23", "start_warsaw": None}]}
+    race = {"sessions": [{"session": "FP1", "date": "2026-10-23", "start_local": None}]}
     rows = cards.schedule_rows(race, language)
     assert rows == (row,)
     lines = [line.render() for line in cards.schedule_block(rows, language).lines]
@@ -246,7 +246,7 @@ def test_a_session_without_a_time_is_marked_in_each_language(
 def test_the_quali_and_summary_headers() -> None:
     race = {
         "sessions": [
-            {"session": "Race", "date": "2026-10-25", "start_warsaw": "2026-10-25T21:00:00+01:00"}
+            {"session": "Race", "date": "2026-10-25", "start_local": "2026-10-25T21:00:00+01:00"}
         ]
     }
     quali = {"sections": {"race": race}}
@@ -261,8 +261,8 @@ def test_the_weekend_dates_follow_the_warsaw_start_like_the_schedule() -> None:
     # Jolpica's date is the UTC date: a session at 22:30 UTC is the next day in Warsaw.
     race = {
         "sessions": [
-            {"session": "FP1", "date": "2026-10-23", "start_warsaw": "2026-10-23T19:30:00+02:00"},
-            {"session": "Race", "date": "2026-10-25", "start_warsaw": "2026-10-26T00:30:00+01:00"},
+            {"session": "FP1", "date": "2026-10-23", "start_local": "2026-10-23T19:30:00+02:00"},
+            {"session": "Race", "date": "2026-10-25", "start_local": "2026-10-26T00:30:00+01:00"},
         ]
     }
     rows = cards.schedule_rows(race, "ru")
@@ -443,3 +443,26 @@ def test_removing_a_raw_url_keeps_the_punctuation_after_it(
     raw = answer(section("standings", "Зачёт", {"text": text, "sources": [news_source(document)]}))
     card = cards.from_model(cards.DIGEST, raw, document, "ru", lambda _: None)
     assert card.sections[0].items[0].text == kept
+
+
+def test_the_schedule_and_race_labels_name_a_non_warsaw_zone() -> None:
+    """F32: a card collected for another time zone says which one (Warsaw keeps its wording)."""
+    rows = (("Пт 30.10 14:30", "Практика 1"),)
+    ny = cards.schedule_block(rows, "ru", "America/New_York").lines[0].render()
+    assert ny == "Расписание, время America/New_York"
+    assert cards.schedule_block(rows, "ru").lines[0].render() == "Расписание, время варшавское"
+    assert cards.zone_label("en", "race_at", "America/New_York", when="Sun 01.11 15:00") == (
+        "Race: Sun 01.11 15:00, America/New_York time"
+    )
+    saved = cards.Card("digest", "ru", "Гран-при", timezone="America/New_York").to_dict()
+    assert (
+        cards.from_dict(
+            {
+                **saved,
+                "sections": [
+                    {"id": "x", "heading": "x", "items": [{"text": "t", "unknown": True}]}
+                ],
+            }
+        ).timezone
+        == "America/New_York"
+    )

@@ -169,7 +169,9 @@ def test_a_state_file_from_f24_gains_update_statuses_and_offers(tmp_path: Path) 
         store.follow(1, LAST)
         assert [o.story.id for o in lifecycle.plan(store, MORNING).send] == [1]
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT version FROM schema_versions").fetchall() == [(SCHEMA_VERSION,)]
+        assert db.execute(
+            "SELECT version FROM schema_versions WHERE component = 'stories'"
+        ).fetchall() == [(SCHEMA_VERSION,)]
 
 
 # --- story detection keeps to the lifecycle -------------------------------------------------

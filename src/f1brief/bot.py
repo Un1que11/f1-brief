@@ -7,8 +7,9 @@ Every other reply carries a "← Меню" button, and a text that is not a comm
 `/stories` lists each story as a button that opens its timeline, with the buttons "Следить",
 "Отписаться", "Без уведомлений на 7 дней" and "Следить за <entities>". The last one, offered
 once a story is followed and never acted on by itself, adds the story's drivers and teams that
-are not favourites yet to `config.toml` (people without a Jolpica id are not favourites, so
-they are left out); the favourites screen removes one with a tap. The typed commands
+are not favourites yet to the account's favourites (F32: in the state file, not
+`config.toml`; people without a Jolpica id are not favourites, so they are left out); the
+favourites screen removes one with a tap. The typed commands
 `/story <id>`, `/follow <id>`, `/unfollow <id>`, `/mute <id> <days>`, `/archive`, `/next` and
 `/favourites` keep working. Callback data and command names never depend on the UI language.
 
@@ -34,7 +35,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -46,7 +47,7 @@ from f1brief import telegram_html as th
 from f1brief.bot_texts import ICON_STORY, Texts, texts_for
 from f1brief.config import ConfigError, Favourite, Favourites
 from f1brief.messages import DEFAULT_LANGUAGE
-from f1brief.schedule import Race, ScheduleError, next_race
+from f1brief.schedule import WARSAW, Race, ScheduleError, next_race
 from f1brief.send_log import StateError
 from f1brief.stories import (
     Entity,
@@ -215,13 +216,13 @@ def status_line(entry: StoryUpdate, texts: Texts) -> list[str]:
     return [texts.status_change.format(status=texts.status(entry.status))] if entry.status else []
 
 
-def _line(story: Story, texts: Texts, numbered: bool = True) -> str:
+def _line(story: Story, texts: Texts, numbered: bool = True, tz: tzinfo = WARSAW) -> str:
     template = texts.story_line_numbered if numbered else texts.story_line
     return template.format(
         id=story.id,
         title=story.title,
         status=texts.status(story.status),
-        date=texts.date(story.last_update_at),
+        date=texts.date(story.last_update_at, tz),
     )
 
 
@@ -284,11 +285,13 @@ def _not_sent(race: Race) -> datetime | None:
 
 @dataclass
 class Bot:
-    """Handles the updates of one chat against the story store. `add_favourites` stores new
-    favourite teams and drivers (in `config.toml`) and returns the favourites then in effect;
-    `remove_favourite` takes one out. `calendar` returns the season's races (it may raise
-    `ScheduleError`) and `digest_sent` when a round's digest went out; with them the bot says
-    when the next digest comes. `warn` logs updates from other chats."""
+    """Handles the updates of one chat (one account) against the story store, which follows
+    as that account. `add_favourites` stores new favourite teams and drivers (the account's,
+    in the state file) and returns the favourites then in effect; `remove_favourite` takes
+    one out. `calendar` returns the season's races (it may raise `ScheduleError`) and
+    `digest_sent` when a round's digest went out; with them the bot says when the next
+    digest comes. Dates and times are in `tz`, the account's time zone. `warn` logs updates
+    from other chats."""
 
     store: StoryStore
     chat_id: str = field(repr=False)
@@ -298,6 +301,7 @@ class Bot:
     calendar: Callable[[], Sequence[Race]] | None = None
     digest_sent: DigestSent = _not_sent
     days_before: int = send_window.DEFAULT_DAYS_BEFORE
+    tz: tzinfo = WARSAW
     language: str = DEFAULT_LANGUAGE
     warn: Callable[[str], None] = _warn
     ignored_chats: set[str] = field(default_factory=set, repr=False)
@@ -400,9 +404,9 @@ class Bot:
                 note = ""
                 if muted and subscription and subscription.muted_until:
                     note = self.texts.muted_until.format(
-                        date=self.texts.date(subscription.muted_until)
+                        date=self.texts.date(subscription.muted_until, self.tz)
                     )
-                lines.append(f"{icon} {_line(story, self.texts, numbered=False)}{note}")
+                lines.append(f"{icon} {_line(story, self.texts, numbered=False, tz=self.tz)}{note}")
                 buttons.append((self._open_button(story, icon),))
         else:
             lines.append(self.texts.following_none)
@@ -410,7 +414,7 @@ class Bot:
             lines += [
                 "",
                 self.texts.recent,
-                *(f"• {_line(s, self.texts, numbered=False)}" for s in recent),
+                *(f"• {_line(s, self.texts, numbered=False, tz=self.tz)}" for s in recent),
             ]
             buttons += [(self._open_button(s),) for s in recent]
         lines += ["", self.texts.stories_hint]
@@ -428,7 +432,8 @@ class Bot:
         followed = {s.id for s in self.store.followed()}
         lines = [self.texts.archive_title.format(count=len(every))]
         lines += [
-            _line(s, self.texts) + (self.texts.archive_followed if s.id in followed else "")
+            _line(s, self.texts, tz=self.tz)
+            + (self.texts.archive_followed if s.id in followed else "")
             for s in every
         ]
         lines += ["", self.texts.archive_hint]
@@ -458,7 +463,7 @@ class Bot:
         entries: list[th.Line] = []
         for entry in self.store.timeline(story.id):
             update = entry.update
-            when = texts.date(update.published_at or entry.recorded_at)
+            when = texts.date(update.published_at or entry.recorded_at, self.tz)
             spans = [th.Span(f"{when} — "), th.Span(update.headline, bold=True), th.Span("\n")]
             spans += source_line(update.what_changed, update.source, update.url).spans
             spans += [th.Span(f"\n{line}") for line in status_line(entry, texts)]
@@ -492,7 +497,7 @@ class Bot:
             return self._replies(self.texts.mute_not_followed.format(id=story.id))
         return self._replies(
             self.texts.muted.format(
-                id=story.id, title=story.title, until=self.texts.date_time(until)
+                id=story.id, title=story.title, until=self.texts.date_time(until, self.tz)
             ),
             self._story_buttons(story, following=True),
         )
@@ -517,13 +522,13 @@ class Bot:
             return self.texts.calendar_unavailable
         try:
             for race in races:
-                w = send_window.window(race, self.days_before)
+                w = send_window.window(race, self.days_before, self.tz)
                 if now >= w.closes or self.digest_sent(race) is not None:
                     continue
                 if now >= w.opens:
                     return self.texts.next_digest_soon.format(race=race.name)
                 return self.texts.next_digest_at.format(
-                    race=race.name, when=self.texts.day_time(w.opens)
+                    race=race.name, when=self.texts.day_time(w.opens, self.tz), zone=self.zone
                 )
         except StateError as exc:
             self.warn(f"send log: {exc}")
@@ -537,21 +542,27 @@ class Bot:
         race = next_race(races, now)
         if race is None:
             return self._replies(self.texts.no_races)
-        w = send_window.window(race, self.days_before)
+        w = send_window.window(race, self.days_before, self.tz)
         try:
             sent = self.digest_sent(race)
         except StateError as exc:
             self.warn(f"send log: {exc}")
             sent = None
         if sent is not None:
-            digest = self.texts.digest_sent.format(when=self.texts.date_time(sent))
+            digest = self.texts.digest_sent.format(when=self.texts.date_time(sent, self.tz))
         elif now < w.opens:
-            digest = self.texts.digest_at.format(when=self.texts.day_time(w.opens))
+            digest = self.texts.digest_at.format(
+                when=self.texts.day_time(w.opens, self.tz), zone=self.zone
+            )
         elif now < w.closes:
             digest = self.texts.digest_soon
         else:
             digest = self.texts.digest_not_sent
-        return self._html(self.texts.next_race(race, digest))
+        return self._html(self.texts.next_race(race, digest, self.tz))
+
+    @property
+    def zone(self) -> str:
+        return self.texts.by_zone(self.tz)
 
     # --- favourites ----------------------------------------------------------------------
 

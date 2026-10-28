@@ -245,7 +245,7 @@ def test_collect_merges_archived_and_fresh_news(calendar: list[Race]) -> None:
     )
 
     assert document["kind"] == "monthly_summary"
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert [d["id"] for d in document["favourites"]["drivers"]] == ["russell", "ocon", "bearman"]
     assert document["period"] == {"from": "2025-12-01", "to": "2026-01-03"}
     assert document["missing"] == []
@@ -265,7 +265,7 @@ def test_collect_names_the_start_of_the_next_season(calendar: list[Race]) -> Non
     start = document["sections"]["season_start"]
     assert (start["season"], start["round"], start["name"]) == (2026, 1, "Australian Grand Prix")
     fp1 = start["sessions"][0]
-    assert fp1["session"] == "FP1" and fp1["start_warsaw"].startswith("2026-03-06T")
+    assert fp1["session"] == "FP1" and fp1["start_local"].startswith("2026-03-06T")
     assert start["sources"] == [
         {"name": "Jolpica-F1", "url": "https://api.jolpi.ca/ergast/f1/2026.json?limit=100"}
     ]

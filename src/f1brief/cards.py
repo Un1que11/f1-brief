@@ -6,8 +6,8 @@ qualifying and the off-season summary.
 `claude -p` returns structured JSON (sections of items, each item with the sources it came
 from) instead of plain text; `from_model` parses it, keeps only sources that appear in the
 facts document the text was written from, and adds what code knows better than the model:
-the header's dates and the session schedule in Warsaw time. `render` turns a card into
-Telegram HTML messages (`telegram_html`):
+the header's dates and the session schedule in the reader's local time (Warsaw by default).
+`render` turns a card into Telegram HTML messages (`telegram_html`):
 
     🏁 <b>Гран-при США</b>
     23–25.10.2026
@@ -95,8 +95,10 @@ LABELS: dict[str, dict[str, Any]] = {
             "Race": "Гонка",
         },
         "schedule": "Расписание, время варшавское",
+        "schedule_other": "Расписание, время {tz}",
         "tbc": "время уточняется",
         "race_at": "Гонка: {when} по Варшаве",
+        "race_at_other": "Гонка: {when} по времени {tz}",
         "round": "Этап {round}",
     },
     "en": {
@@ -111,8 +113,10 @@ LABELS: dict[str, dict[str, Any]] = {
             "Race": "Race",
         },
         "schedule": "Schedule, Warsaw time",
+        "schedule_other": "Schedule, {tz} time",
         "tbc": "time to be confirmed",
         "race_at": "Race: {when}, Warsaw time",
+        "race_at_other": "Race: {when}, {tz} time",
         "round": "Round {round}",
     },
     "pl": {
@@ -127,12 +131,22 @@ LABELS: dict[str, dict[str, Any]] = {
             "Race": "Wyścig",
         },
         "schedule": "Harmonogram, czas warszawski",
+        "schedule_other": "Harmonogram, czas {tz}",
         "tbc": "godzina do potwierdzenia",
         "race_at": "Wyścig: {when} czasu warszawskiego",
+        "race_at_other": "Wyścig: {when} czasu {tz}",
         "round": "Runda {round}",
     },
 }
 NO_TIME = "--:--"
+DEFAULT_TIMEZONE = "Europe/Warsaw"
+
+
+def zone_label(language: str, key: str, tz: str, **fields: str) -> str:
+    """The label `key` for Warsaw, or its `<key>_other` form naming another zone (F32)."""
+    if tz == DEFAULT_TIMEZONE:
+        return labels(language)[key].format(**fields)
+    return labels(language)[f"{key}_other"].format(tz=tz, **fields)
 
 
 class CardError(ValueError):
@@ -166,9 +180,11 @@ class Card:
     language: str
     title: str
     subtitle: str = ""
-    # (when, session) rows of the weekend's schedule, in Warsaw time.
+    # (when, session) rows of the weekend's schedule, in local time (`timezone`).
     schedule: tuple[tuple[str, str], ...] = ()
     sections: tuple[Section, ...] = ()
+    # The reader's time zone the facts document was collected in (F32).
+    timezone: str = DEFAULT_TIMEZONE
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -250,8 +266,8 @@ def _parse_day(value: Any) -> date | None:
 
 
 def _when(session: Mapping[str, Any], language: str) -> str | None:
-    """ "Пт 23.10 19:30" (the time as the document has it: Warsaw), "--:--" when unknown."""
-    start = _parse_time(session.get("start_warsaw"))
+    """ "Пт 23.10 19:30" (the time as the document has it: local), "--:--" when unknown."""
+    start = _parse_time(session.get("start_local"))
     day = start.date() if start else _parse_day(session.get("date"))
     if day is None:
         return None
@@ -297,9 +313,9 @@ def _round_and_circuit(race: Mapping[str, Any] | None, language: str) -> str:
 
 
 def _session_day(session: Mapping[str, Any]) -> date | None:
-    """The Warsaw date of a session: from its start when known (as the schedule rows show
+    """The local date of a session: from its start when known (as the schedule rows show
     it), else its `date`."""
-    start = _parse_time(session.get("start_warsaw"))
+    start = _parse_time(session.get("start_local"))
     return start.date() if start else _parse_day(session.get("date"))
 
 
@@ -309,13 +325,18 @@ def _weekend_dates(race: Mapping[str, Any] | None) -> str:
     return date_range(found[0], found[-1]) if found else ""
 
 
-def _race_start(race: Mapping[str, Any] | None, language: str) -> str:
+def _race_start(race: Mapping[str, Any] | None, language: str, tz: str) -> str:
     for session in (race or {}).get("sessions") or []:
         if session.get("session") == "Race":
             when = _when(session, language)
             if when:
-                return labels(language)["race_at"].format(when=when)
+                return zone_label(language, "race_at", tz, when=when)
     return ""
+
+
+def document_timezone(document: Mapping[str, Any]) -> str:
+    value = document.get("timezone")
+    return value if isinstance(value, str) and value else DEFAULT_TIMEZONE
 
 
 def _period(document: Mapping[str, Any]) -> str:
@@ -331,7 +352,7 @@ def header(kind: str, document: Mapping[str, Any], language: str) -> tuple[str, 
         parts = (_round_and_circuit(race, language), _weekend_dates(race))
         return " · ".join(p for p in parts if p), schedule_rows(race, language)
     if kind == QUALI:
-        return _race_start(race, language), ()
+        return _race_start(race, language, document_timezone(document)), ()
     return _period(document), ()
 
 
@@ -459,7 +480,7 @@ def from_model(
     if not sections:
         raise CardError("no section with a sourced item is left in the answer")
     subtitle, schedule = header(kind, document, language)
-    return Card(kind, language, title, subtitle, schedule, sections)
+    return Card(kind, language, title, subtitle, schedule, sections, document_timezone(document))
 
 
 def from_dict(value: Mapping[str, Any]) -> Card:
@@ -483,7 +504,15 @@ def from_dict(value: Mapping[str, Any]) -> Card:
         if isinstance(row, list | tuple) and len(row) == 2
     )
     language = str(value.get("language") or "ru")
-    return Card(kind, language, title, _text(value.get("subtitle")), schedule, sections)
+    return Card(
+        kind,
+        language,
+        title,
+        _text(value.get("subtitle")),
+        schedule,
+        sections,
+        document_timezone(value),
+    )
 
 
 # --- rendering ---------------------------------------------------------------------------
@@ -513,10 +542,12 @@ def item_line(item: Item) -> Line:
     return Line((*line.spans, *source_spans(item.sources)))
 
 
-def schedule_block(rows: tuple[tuple[str, str], ...], language: str) -> Block:
+def schedule_block(
+    rows: tuple[tuple[str, str], ...], language: str, tz: str = DEFAULT_TIMEZONE
+) -> Block:
     width = max(len(when) for when, _ in rows)
     table = "\n".join(f"{when.ljust(width)}  {name}" for when, name in rows)
-    lines = [plain(labels(language)["schedule"]), Line((Span(table, pre=True),))]
+    lines = [plain(zone_label(language, "schedule", tz)), Line((Span(table, pre=True),))]
     if any(NO_TIME in when for when, _ in rows):
         lines.append(plain(f"{NO_TIME} — {labels(language)['tbc']}"))
     return Block(tuple(lines))
@@ -528,7 +559,7 @@ def blocks(card: Card) -> list[Block]:
         top.append(plain(card.subtitle))
     result = [Block(tuple(top))]
     if card.schedule:
-        result.append(schedule_block(card.schedule, card.language))
+        result.append(schedule_block(card.schedule, card.language, card.timezone))
     for section in card.sections:
         emoji = section_emoji(card.kind, section.id)
         heading = Line((Span(f"{emoji} {section.heading}".rstrip(), bold=True),))

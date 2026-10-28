@@ -10,7 +10,7 @@ import httpx
 import pytest
 from test_telegram_send import CHAT_ID, OK, PARSE_ERROR, TOKEN, Recorder
 
-from f1brief import cli, digest, facts, schedule
+from f1brief import cli, digest, facts, schedule, users
 from f1brief import telegram_send as ts
 from f1brief.cli import main
 from f1brief.send_log import SendLog, Status
@@ -48,7 +48,9 @@ class Pipeline:
         self.stories: list[dict[str, Any]] = []
         self.languages: list[str] = []
 
-    def collect(self, now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
+    def collect(
+        self, now: datetime, favourites: object, stories: Any = None, tz: Any = None
+    ) -> dict[str, Any]:
         self.collected += 1
         if stories is not None:
             self.stories.append(stories())
@@ -97,6 +99,9 @@ def test_sends_once_when_due(setup, capsys: pytest.CaptureFixture[str]) -> None:
     err = capsys.readouterr().err
     assert "Due: FP1 starts Fri 23 Oct 19:30." in err
     assert err.endswith("sent 1 message(s) for round 18 of 2026\n")
+    # The digest went to the owner (F32), whose chat is now the configured one.
+    with users.UserStore("state.db") as accounts:
+        assert accounts.owner().chat_id == CHAT_ID
 
     # The next day's run sends nothing and does not even collect facts.
     assert main(["run"]) == 0
@@ -113,6 +118,16 @@ def test_the_digest_is_written_in_the_configured_language(setup, tmp_path: Path)
     assert main(["run"]) == 0
     assert pipeline.languages == ["pl"]
     assert len(recorder.requests) == 1
+
+
+def test_the_owners_own_language_wins_over_the_config(setup, tmp_path: Path) -> None:
+    pipeline, _ = setup
+    (tmp_path / "config.toml").write_text('[digest]\nlanguage = "pl"\n', encoding="utf-8")
+    with users.UserStore(tmp_path / "state.db") as accounts:
+        accounts.set_language(users.OWNER_ID, "en")
+
+    assert main(["run"]) == 0
+    assert pipeline.languages == ["en"]
 
 
 def test_does_nothing_before_the_window(

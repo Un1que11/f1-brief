@@ -8,7 +8,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 
 import httpx
@@ -43,6 +43,7 @@ from f1brief import (
     telegram_html,
     telegram_send,
     track_history,
+    users,
     weather,
 )
 
@@ -62,7 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("config", help="show the settings in effect and where they come from")
 
-    next_cmd = commands.add_parser("next", help="show the next race weekend in Warsaw time")
+    next_cmd = commands.add_parser(
+        "next", help="show the next race weekend in local time (the owner's time zone)"
+    )
     next_cmd.add_argument("--season", default="current", help="season year (default: current)")
 
     standings_cmd = commands.add_parser(
@@ -261,8 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
             "--days-before",
             type=int,
             metavar="N",
-            help="open the send window N days before FP1, Warsaw time "
-            "(default: digest.days_before_fp1 in the config file)",
+            help="open the send window N days before FP1, local time "
+            "(default: the owner's days before FP1, digest.days_before_fp1 in the config file)",
         )
 
     due_cmd = commands.add_parser(
@@ -296,9 +299,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     alerts_cmd = commands.add_parser(
         "alerts",
-        help="send the alerts on followed stories that are due (none in the quiet hours "
-        "23:00-08:00 Warsaw, at most 3 a day) and the offers to unfollow a followed story "
-        "with no news for 60 days; `run` does this too",
+        help="send the alerts on followed stories that are due (none in the quiet hours, "
+        "23:00-08:00 local time by default, at most 3 a day) and the offers to unfollow a "
+        "followed story with no news for 60 days; `run` does this too",
     )
     alerts_cmd.add_argument(
         "--state",
@@ -491,7 +494,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _cmd_next(season: str) -> int:
+def _cmd_next(season: str, tz: tzinfo = schedule.WARSAW) -> int:
     try:
         races = schedule.fetch_schedule(season)
     except schedule.ScheduleError as exc:
@@ -501,7 +504,7 @@ def _cmd_next(season: str) -> int:
     if race is None:
         print(f"No upcoming races in season {season}.")
         return 0
-    print(schedule.format_schedule(race))
+    print(schedule.format_schedule(race, tz))
     return 0
 
 
@@ -644,12 +647,14 @@ def _collect_facts(
     state: str,
     language: str,
     story_model: digest.TextModel | None = None,
+    tz: tzinfo = schedule.WARSAW,
 ) -> dict | None:
-    """The facts document, or None (after printing why) when no section could be collected.
-    Story texts missing in `language` are generated with `story_model` (none without it)."""
+    """The facts document, times in `tz`, or None (after printing why) when no section could
+    be collected. Story texts missing in `language` are generated with `story_model` (none
+    without it)."""
     now = _now()
     reader = _stories_reader(state, now, favourites, language, story_model)
-    document = facts.collect(now, favourites, stories=reader)
+    document = facts.collect(now, favourites, stories=reader, tz=tz)
     if not any(data is not None for data in document["sections"].values()):
         for gap in document["missing"]:
             print(f"error: {gap['section']}: {gap['reason']}", file=sys.stderr)
@@ -670,8 +675,14 @@ def _write(text: str, output: str | None) -> None:
         sys.stdout.write(text)
 
 
-def _cmd_facts(output: str | None, state: str, favourites: config.Favourites, language: str) -> int:
-    document = _collect_facts(favourites, state, language)
+def _cmd_facts(
+    output: str | None,
+    state: str,
+    favourites: config.Favourites,
+    language: str,
+    tz: tzinfo = schedule.WARSAW,
+) -> int:
+    document = _collect_facts(favourites, state, language, tz=tz)
     if document is None:
         return 1
     _write(json.dumps(document, ensure_ascii=False, indent=2) + "\n", output)
@@ -687,6 +698,7 @@ def _cmd_digest(
     state: str,
     favourites: config.Favourites,
     language: str,
+    tz: tzinfo = schedule.WARSAW,
 ) -> int:
     if facts_path:
         try:
@@ -701,7 +713,7 @@ def _cmd_digest(
     else:
         # With --prompt-only nothing runs claude: story texts are cached or as stored.
         story_model = None if prompt_only else story_texts.default_model(model)
-        document = _collect_facts(favourites, state, language, story_model)
+        document = _collect_facts(favourites, state, language, story_model, tz)
         if document is None:
             return 1
     if prompt_only:
@@ -857,11 +869,14 @@ def _calendar() -> list[schedule.Race] | None:
         return None
 
 
-def _decide_summary(races: list[schedule.Race], log: send_log.SendLog) -> offseason.Decision | None:
-    """The off-season decision, or None (after printing why) when the calendar is
-    unavailable. `races` is the current season's calendar, reused when it is this year's."""
+def _decide_summary(
+    races: list[schedule.Race], log: send_log.SendLog, tz: tzinfo = schedule.WARSAW
+) -> offseason.Decision | None:
+    """The off-season decision (months and days in `tz`), or None (after printing why) when
+    the calendar is unavailable. `races` is the current season's calendar, reused when it is
+    this year's."""
     now = _now()
-    year = now.astimezone(schedule.WARSAW).year
+    year = now.astimezone(tz).year
     calendar = [r for r in races if r.season == year]
     try:
         if not calendar:
@@ -877,10 +892,10 @@ def _decide_summary(races: list[schedule.Race], log: send_log.SendLog) -> offsea
             print(f"warning: next season's calendar: {exc}", file=sys.stderr)
             return []
 
-    return offseason.decide(calendar, now, log, next_season)
+    return offseason.decide(calendar, now, log, next_season, tz)
 
 
-def _cmd_due(days_before: int, state: str) -> int:
+def _cmd_due(days_before: int, state: str, tz: tzinfo = schedule.WARSAW) -> int:
     if days_before < 0:
         print("error: --days-before must not be negative", file=sys.stderr)
         return 2
@@ -889,14 +904,14 @@ def _cmd_due(days_before: int, state: str) -> int:
             races = _calendar()
             if races is None:
                 return 1
-            decision = send_window.decide(races, _now(), log, days_before)
-            print(send_window.describe(decision))
+            decision = send_window.decide(races, _now(), log, days_before, tz)
+            print(send_window.describe(decision, tz))
             if decision.due:
                 return 0
-            quali = after_qualifying.decide(races, _now(), log)
+            quali = after_qualifying.decide(races, _now(), log, tz)
             if quali.under_way:
                 print(after_qualifying.describe(quali))
-            summary = _decide_summary(races, log)
+            summary = _decide_summary(races, log, tz)
             if summary is None:
                 return 1
             if summary.off_season:
@@ -913,9 +928,10 @@ def _digest_for(
     state: str,
     favourites: config.Favourites,
     language: str,
+    tz: tzinfo = schedule.WARSAW,
 ) -> list[str] | None:
     """The digest messages for `race`, or None (after printing why) when they cannot be made."""
-    document = _collect_facts(favourites, state, language, story_texts.default_model(model))
+    document = _collect_facts(favourites, state, language, story_texts.default_model(model), tz)
     if document is None:
         return None
     about = document["sections"]["race"]
@@ -1040,11 +1056,12 @@ def _summary_for(
     model: str | None,
     favourites: config.Favourites,
     language: str,
+    tz: tzinfo = schedule.WARSAW,
 ) -> list[str] | None:
     """The monthly summary messages, or None (after printing why) when they cannot be made."""
     assert decision.since is not None
     document = offseason.collect(
-        _now(), decision.since, decision.next_race, items, favourites, failed
+        _now(), decision.since, decision.next_race, items, favourites, failed, tz
     )
     _warn_missing(document)
     return _messages(_summary_card(document, model, language))
@@ -1080,9 +1097,12 @@ def _classification(race: schedule.Race) -> list[form.QualifyingResult] | None:
 
 
 def _qualifying_document(
-    race: schedule.Race, results: list[form.QualifyingResult], favourites: config.Favourites
+    race: schedule.Race,
+    results: list[form.QualifyingResult],
+    favourites: config.Favourites,
+    tz: tzinfo = schedule.WARSAW,
 ) -> dict:
-    document = after_qualifying.collect(race, results, _now(), favourites)
+    document = after_qualifying.collect(race, results, _now(), favourites, tz=tz)
     _warn_missing(document)
     return document
 
@@ -1112,9 +1132,24 @@ def _send_or_print(
     return _deliver(target, chunks, credentials)
 
 
-def _credentials(dry_run: bool, env_file: str) -> telegram_send.Credentials | None:
+def _bind_owner(state: str, credentials: telegram_send.Credentials) -> None:
+    """Records TELEGRAM_CHAT_ID as the owner's chat (F32): until sign-up (F33) every message
+    goes to the owner, the only account. Raises StateError."""
+    with users.UserStore(state) as accounts:
+        accounts.bind_owner(credentials.chat_id)
+
+
+def _credentials(dry_run: bool, env_file: str, state: str) -> telegram_send.Credentials | None:
     """None for a dry run; raises SendError when the settings are missing."""
-    return None if dry_run else telegram_send.load_credentials(env_file=env_file)
+    if dry_run:
+        return None
+    credentials = telegram_send.load_credentials(env_file=env_file)
+    _bind_owner(state, credentials)
+    return credentials
+
+
+def _quiet_hours(settings: config.Config) -> alerts.QuietHours:
+    return alerts.QuietHours(settings.quiet_start, settings.quiet_end, settings.tz)
 
 
 def _cmd_run(
@@ -1123,24 +1158,27 @@ def _cmd_run(
     dry_run: bool,
     model: str | None,
     env_file: str,
-    favourites: config.Favourites,
-    language: str,
+    settings: config.Config,
 ) -> int:
     if days_before < 0:
         print("error: --days-before must not be negative", file=sys.stderr)
         return 2
-    code = _run_due(days_before, state, dry_run, model, env_file, favourites, language)
+    code = _run_due(days_before, state, dry_run, model, env_file, settings)
     # Every run, whatever was due: alerts that waited for the morning go out with the first
     # run after the quiet hours.
-    return max(code, _cmd_alerts(state, dry_run, env_file, language))
+    return max(code, _cmd_alerts(state, dry_run, env_file, settings))
 
 
-def _cmd_alerts(state: str, dry_run: bool, env_file: str, language: str) -> int:
+def _cmd_alerts(state: str, dry_run: bool, env_file: str, settings: config.Config) -> int:
+    """The owner's story alerts and offers to unfollow, with the owner's cap, quiet hours
+    and time zone (per-user delivery is F34)."""
+    language = settings.language
     now = _now()
+    hours = _quiet_hours(settings)
     try:
-        with stories.StoryStore(state) as store:
-            planned = alerts.plan(store, now)
-            offers = lifecycle.plan(store, now)
+        with stories.StoryStore(state, users.OWNER_ID) as store:
+            planned = alerts.plan(store, now, settings.max_alerts_per_day, hours)
+            offers = lifecycle.plan(store, now, hours=hours)
             any_alert = bool(planned.send or planned.waiting or planned.skip)
             any_offer = bool(offers.send or offers.waiting)
             if not (any_alert or any_offer):
@@ -1154,19 +1192,20 @@ def _cmd_alerts(state: str, dry_run: bool, env_file: str, language: str) -> int:
                     for reply in alerts.replies(alert, language):
                         _print_action(reply)
                 for offer in offers.send:
-                    _print_action(lifecycle.reply(offer, now, language))
+                    _print_action(lifecycle.reply(offer, now, language, settings.tz))
                 print("dry run: no alert sent, nothing recorded", file=sys.stderr)
                 return 0
             if not (planned.send or offers.send):
                 alerts.deliver(store, planned, now, send=lambda reply: None)
                 return 0
             credentials = telegram_send.load_credentials(env_file=env_file)
+            _bind_owner(state, credentials)
             with _telegram_client() as client:
                 send = bot.BotApi(credentials, client).send
                 # Offers wait while Telegram refuses the alerts.
                 ok = alerts.deliver(
                     store, planned, now, send, language=language
-                ) and lifecycle.deliver(store, offers, now, send, language=language)
+                ) and lifecycle.deliver(store, offers, now, send, language=language, tz=settings.tz)
             return 0 if ok else 1
     except (telegram_send.SendError, send_log.StateError, stories.StoryError) as exc:
         print(f"error: story alerts: {exc}", file=sys.stderr)
@@ -1179,36 +1218,37 @@ def _run_due(
     dry_run: bool,
     model: str | None,
     env_file: str,
-    favourites: config.Favourites,
-    language: str,
+    settings: config.Config,
 ) -> int:
-    """The digest, the message after qualifying or the monthly summary, whichever is due."""
+    """The digest, the message after qualifying or the monthly summary, whichever is due,
+    for the owner with the owner's settings (per-user feeds are F34)."""
+    favourites, language, tz = settings.favourites, settings.language, settings.tz
     try:
-        with send_log.SendLog(state) as log:
+        with send_log.SendLog(state, users.OWNER_ID) as log:
             races = _calendar()
             if races is None:
                 return 1
-            decision = send_window.decide(races, _now(), log, days_before)
-            print(send_window.describe(decision), file=sys.stderr)
+            decision = send_window.decide(races, _now(), log, days_before, tz)
+            print(send_window.describe(decision, tz), file=sys.stderr)
             if decision.due and decision.race is not None:
                 # Before the digest is written, so missing settings cost no claude run.
-                credentials = _credentials(dry_run, env_file)
-                chunks = _digest_for(decision.race, model, state, favourites, language)
+                credentials = _credentials(dry_run, env_file, state)
+                chunks = _digest_for(decision.race, model, state, favourites, language, tz)
                 return _send_or_print(chunks, credentials, _round_target(log, decision.race))
-            quali = after_qualifying.decide(races, _now(), log)
+            quali = after_qualifying.decide(races, _now(), log, tz)
             if quali.under_way:
                 print(after_qualifying.describe(quali), file=sys.stderr)
             if quali.due and quali.race is not None:
-                credentials = _credentials(dry_run, env_file)
+                credentials = _credentials(dry_run, env_file, state)
                 # Nothing is claimed until the text is ready: while the classification is
                 # not published (or Jolpica fails) the next run tries again.
                 results = _classification(quali.race)
                 if not results:
                     return 0 if results is not None else 1
-                document = _qualifying_document(quali.race, results, favourites)
+                document = _qualifying_document(quali.race, results, favourites, tz)
                 chunks = _messages(_qualifying_card(document, model, language))
                 return _send_or_print(chunks, credentials, _qualifying_target(log, quali.race))
-            summary = _decide_summary(races, log)
+            summary = _decide_summary(races, log, tz)
             if summary is None:
                 return 1
             if not summary.off_season:
@@ -1220,9 +1260,9 @@ def _run_due(
                 if not dry_run:
                     _archive_news(state, summary.since, False, favourites)
                 return 0
-            credentials = _credentials(dry_run, env_file)
+            credentials = _credentials(dry_run, env_file, state)
             items, failed = _archive_news(state, summary.since, dry_run, favourites)
-            chunks = _summary_for(summary, items, failed, model, favourites, language)
+            chunks = _summary_for(summary, items, failed, model, favourites, language, tz)
             return _send_or_print(chunks, credentials, _summary_target(log, summary.month))
     except telegram_send.SendError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1239,26 +1279,27 @@ def _cmd_summary(
     state: str,
     favourites: config.Favourites,
     language: str,
+    tz: tzinfo = schedule.WARSAW,
 ) -> int:
     now = _now()
-    today = now.astimezone(schedule.WARSAW).date()
+    today = now.astimezone(tz).date()
     races = _calendar()
     if races is None:
         return 1
-    race = offseason.next_weekend(races, today)
+    race = offseason.next_weekend(races, today, tz)
     if race is None:
         try:
-            race = offseason.next_weekend(schedule.fetch_schedule(today.year + 1), today)
+            race = offseason.next_weekend(schedule.fetch_schedule(today.year + 1), today, tz)
         except schedule.ScheduleError as exc:
             print(f"warning: next season's calendar: {exc}", file=sys.stderr)
-    since = offseason.period_start(today)
+    since = offseason.period_start(today, tz)
     try:
         # Reads the archive but adds nothing to it: only `run` keeps the news.
         items, failed = _archive_news(state, since, True, favourites)
     except send_log.StateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    document = offseason.collect(now, since, race, items, favourites, failed)
+    document = offseason.collect(now, since, race, items, favourites, failed, tz)
     if prompt_only:
         _write(digest.build_prompt(document, digest.SUMMARY_TEMPLATE, language), output)
         return 0
@@ -1280,6 +1321,7 @@ def _cmd_quali(
     prompt_only: bool,
     favourites: config.Favourites,
     language: str,
+    tz: tzinfo = schedule.WARSAW,
 ) -> int:
     try:
         races = schedule.fetch_schedule(season)
@@ -1296,7 +1338,7 @@ def _cmd_quali(
     results = _classification(race)
     if not results:
         return 1
-    document = _qualifying_document(race, results, favourites.only(team_ids, driver_ids))
+    document = _qualifying_document(race, results, favourites.only(team_ids, driver_ids), tz)
     if prompt_only:
         _write(digest.build_prompt(document, digest.QUALIFYING_TEMPLATE, language), output)
         return 0
@@ -1370,9 +1412,11 @@ def _cmd_bot(
     dry_run: bool,
     updates_path: str | None,
     chat_id: str | None,
-    settings: config.Config,
+    defaults: config.Config,
     check: bool = False,
 ) -> int:
+    """The bot listener. `defaults` are the config's settings; each account's own changes
+    come from the state file."""
     if check:
         if dry_run or updates_path is not None or chat_id is not None:
             print("error: --check takes no other bot options", file=sys.stderr)
@@ -1384,34 +1428,45 @@ def _cmd_bot(
     if chat_id is not None and not dry_run:
         print("error: --chat-id only works with --dry-run", file=sys.stderr)
         return 2
-    config_path = settings.source or config.DEFAULT_PATH
 
-    def add_favourites(
-        teams: Sequence[config.Favourite], drivers: Sequence[config.Favourite]
-    ) -> config.Favourites:
-        updated = config.add_favourites(config_path, teams, drivers, write=not dry_run)
-        if dry_run:
-            names = ", ".join(f.name for f in (*teams, *drivers))
-            print(f"dry run: {config_path} not changed (would add {names})", file=sys.stderr)
-        return updated.favourites
+    def handler_for(
+        store: stories.StoryStore, log: send_log.SendLog, accounts: users.UserStore, chat: str
+    ) -> bot.Bot:
+        """The bot for the account of `chat` (the owner's until sign-up, F33), with its
+        settings. Favourites it adds or removes are the account's, in the state file."""
+        user_id = store.user_id
+        effective = accounts.effective(user_id, defaults)
 
-    def remove_favourite(kind: str, fav_id: str) -> config.Favourites:
-        updated = config.remove_favourite(config_path, kind, fav_id, write=not dry_run)
-        if dry_run:
-            print(f"dry run: {config_path} not changed (would remove {fav_id})", file=sys.stderr)
-        return updated.favourites
+        def add_favourites(
+            teams: Sequence[config.Favourite], drivers: Sequence[config.Favourite]
+        ) -> config.Favourites:
+            updated = accounts.add_favourites(
+                user_id, defaults.favourites, teams, drivers, write=not dry_run
+            )
+            if dry_run:
+                names = ", ".join(f.name for f in (*teams, *drivers))
+                print(f"dry run: favourites not changed (would add {names})", file=sys.stderr)
+            return updated
 
-    def handler_for(store: stories.StoryStore, chat: str, log: send_log.SendLog) -> bot.Bot:
+        def remove_favourite(kind: str, fav_id: str) -> config.Favourites:
+            updated = accounts.remove_favourite(
+                user_id, defaults.favourites, kind, fav_id, write=not dry_run
+            )
+            if dry_run:
+                print(f"dry run: favourites not changed (would remove {fav_id})", file=sys.stderr)
+            return updated
+
         return bot.Bot(
             store,
             chat,
-            settings.favourites,
+            effective.favourites,
             add_favourites,
             remove_favourite=remove_favourite,
             calendar=_cached_calendar(),
             digest_sent=_digest_sent(log),
-            days_before=settings.days_before_fp1,
-            language=settings.language,
+            days_before=effective.days_before_fp1,
+            tz=effective.tz,
+            language=effective.language,
         )
 
     try:
@@ -1425,24 +1480,34 @@ def _cmd_bot(
                 print("error: --updates must hold a list of updates", file=sys.stderr)
                 return 1
             chat = chat_id or telegram_send.load_chat_id(env_file=env_file)
-            with send_log.SendLog(state) as log, stories.StoryStore(state) as store:
-                handler = handler_for(store, chat, log)
-                with contextlib.suppress(_DryRun), store.transaction():
-                    bot.handle_all(handler, updates, _now(), _print_action)
-                    raise _DryRun
+            with users.UserStore(state) as accounts:
+                # A dry run stores nothing, so the chat is not bound: an unknown chat is
+                # answered as the owner's.
+                user = accounts.by_chat(chat) or accounts.owner()
+                with (
+                    send_log.SendLog(state, user.id) as log,
+                    stories.StoryStore(state, user.id) as store,
+                ):
+                    handler = handler_for(store, log, accounts, chat)
+                    with contextlib.suppress(_DryRun), store.transaction():
+                        bot.handle_all(handler, updates, _now(), _print_action)
+                        raise _DryRun
             print(f"dry run: {len(updates)} update(s), nothing sent or stored", file=sys.stderr)
             return 0
         credentials = telegram_send.load_credentials(env_file=env_file)
         timeout = httpx.Timeout(15.0, read=bot.POLL_TIMEOUT_S + 15.0)
+        with users.UserStore(state) as accounts:
+            owner = accounts.bind_owner(credentials.chat_id)
         with (
-            send_log.SendLog(state) as log,
-            stories.StoryStore(state) as store,
+            users.UserStore(state) as accounts,
+            send_log.SendLog(state, owner.id) as log,
+            stories.StoryStore(state, owner.id) as store,
             bot.OffsetStore(state) as offsets,
             httpx.Client(timeout=timeout) as client,
         ):
-            handler = handler_for(store, credentials.chat_id, log)
+            handler = handler_for(store, log, accounts, credentials.chat_id)
             api = bot.BotApi(credentials, client)
-            bot.register_commands(api, language=settings.language)
+            bot.register_commands(api, language=defaults.language)
             print("listening for updates (Ctrl-C to stop)", file=sys.stderr)
             bot.listen(api, handler, offsets=offsets)
     except KeyboardInterrupt:
@@ -1681,12 +1746,16 @@ def _cmd_launchd(
     return 0
 
 
-def _cmd_config(settings: config.Config) -> int:
+def _cmd_config(settings: config.Config, account: str | None = None) -> int:
     where = str(settings.source) if settings.source else "built-in defaults (no config file)"
     print(f"settings: {where}")
+    if account:
+        print(f"with the owner's own changes from {account}")
     print(f"language: {settings.language}")
     print(f"days before FP1: {settings.days_before_fp1}")
     print(f"time zone: {settings.timezone}")
+    quiet = f"{settings.quiet_start:%H:%M}-{settings.quiet_end:%H:%M}"
+    print(f"story alerts: at most {settings.max_alerts_per_day} a day, quiet hours {quiet}")
     for label, entries in (
         ("teams", settings.favourites.teams),
         ("drivers", settings.favourites.drivers),
@@ -1701,6 +1770,16 @@ def _cmd_config(settings: config.Config) -> int:
     return 0
 
 
+def _owner_settings(defaults: config.Config, state: str) -> config.Config:
+    """The settings in force for the owner (F32): the config's, with what the owner changed
+    from the bot (kept in the state file). Without a state file there are no changes, and
+    none is created. Raises StateError."""
+    if not Path(state).exists():
+        return defaults
+    with users.UserStore(state) as accounts:
+        return accounts.effective(users.OWNER_ID, defaults)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -1708,12 +1787,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     except config.ConfigError as exc:
         print(f"error: config: {exc}", file=sys.stderr)
         return 2
+    defaults = settings
+    state = getattr(args, "state", send_log.DEFAULT_STATE_FILE)
+    try:
+        settings = _owner_settings(defaults, state)
+    except send_log.StateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if getattr(args, "days_before", "absent") is None:
         args.days_before = settings.days_before_fp1
     if args.command == "config":
-        return _cmd_config(settings)
+        return _cmd_config(settings, state if settings != defaults else None)
     if args.command == "next":
-        return _cmd_next(args.season)
+        return _cmd_next(args.season, settings.tz)
     if args.command == "standings":
         return _cmd_standings(args.season)
     favourites = settings.favourites
@@ -1730,7 +1816,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "weather":
         return _cmd_weather()
     if args.command == "facts":
-        return _cmd_facts(args.output, args.state, favourites, settings.language)
+        return _cmd_facts(args.output, args.state, favourites, settings.language, settings.tz)
     if args.command == "digest":
         return _cmd_digest(
             args.facts,
@@ -1740,10 +1826,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.state,
             favourites,
             settings.language,
+            settings.tz,
         )
     if args.command == "summary":
         return _cmd_summary(
-            args.output, args.model, args.prompt_only, args.state, favourites, settings.language
+            args.output,
+            args.model,
+            args.prompt_only,
+            args.state,
+            favourites,
+            settings.language,
+            settings.tz,
         )
     if args.command == "quali":
         return _cmd_quali(
@@ -1756,6 +1849,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.prompt_only,
             favourites,
             settings.language,
+            settings.tz,
         )
     if args.command == "format":
         return _cmd_format(args.input, args.limit)
@@ -1764,19 +1858,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "preview":
         return _cmd_preview(args.kind, args.send, args.env_file)
     if args.command == "due":
-        return _cmd_due(args.days_before, args.state)
+        return _cmd_due(args.days_before, args.state, settings.tz)
     if args.command == "run":
         return _cmd_run(
-            args.days_before,
-            args.state,
-            args.dry_run,
-            args.model,
-            args.env_file,
-            favourites,
-            settings.language,
+            args.days_before, args.state, args.dry_run, args.model, args.env_file, settings
         )
     if args.command == "alerts":
-        return _cmd_alerts(args.state, args.dry_run, args.env_file, settings.language)
+        return _cmd_alerts(args.state, args.dry_run, args.env_file, settings)
     if args.command == "bot":
         return _cmd_bot(
             args.state,
@@ -1784,7 +1872,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.dry_run,
             args.updates,
             args.chat_id,
-            settings,
+            defaults,
             args.check,
         )
     if args.command == "detect-stories":

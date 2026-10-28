@@ -17,9 +17,12 @@ are stored as written, with the `language` they are written in (story detection 
 cached in `story_texts` / `update_texts`; a cached text is derived from the stored one and
 never replaces it, and the update's URL stays the one source of what it says.
 
-The schema is created and upgraded by the numbered steps in `_MIGRATIONS`; the file records
-how many it has had in `schema_versions` (one row per part of the state file that migrates,
-so other tables may get their own later). A file migrated by a newer version is refused.
+Following is per account (F32): `subscriptions`, `story_alerts` and `stale_offers` are keyed
+by `user_id`, and a `StoryStore` follows, alerts and offers for one account (the owner by
+default, see `users`). The stories, their entities, updates and texts are shared by everyone.
+
+The schema is created and upgraded by the numbered steps in `_MIGRATIONS` (see
+`state_schema`). A file migrated by a newer version is refused.
 """
 
 import re
@@ -33,16 +36,10 @@ from pathlib import Path
 from types import TracebackType
 from urllib.parse import urlsplit
 
-from f1brief.send_log import DEFAULT_STATE_FILE, StateError
+from f1brief import users
+from f1brief.state_schema import DEFAULT_STATE_FILE, StateError, migrate
 
 _COMPONENT = "stories"
-
-_VERSIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS schema_versions (
-    component TEXT NOT NULL PRIMARY KEY,
-    version INTEGER NOT NULL
-)
-"""
 
 # Each step is a list of statements run in one transaction; never edit a released step, add
 # a new one.
@@ -145,6 +142,47 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
             generated_at TEXT NOT NULL,
             PRIMARY KEY (update_id, language)
         )""",
+    ),
+    (
+        # Per account (F32): following, alerts and offers to unfollow get a `user_id`, part
+        # of their key. The rows stored before there were users are the owner's.
+        """CREATE TABLE subscriptions_new (
+            user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            active INTEGER NOT NULL CHECK (active IN (0, 1)),
+            followed_at TEXT NOT NULL,
+            unfollowed_at TEXT,
+            muted_until TEXT,
+            PRIMARY KEY (user_id, story_id)
+        )""",
+        f"INSERT INTO subscriptions_new SELECT {users.OWNER_ID}, story_id, active, followed_at, "
+        "unfollowed_at, muted_until FROM subscriptions",
+        "DROP TABLE subscriptions",
+        "ALTER TABLE subscriptions_new RENAME TO subscriptions",
+        """CREATE TABLE story_alerts_new (
+            user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            update_id INTEGER NOT NULL REFERENCES story_updates (id) ON DELETE CASCADE,
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            outcome TEXT NOT NULL CHECK (outcome IN ('sent', 'skipped')),
+            decided_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, update_id)
+        )""",
+        f"INSERT INTO story_alerts_new SELECT {users.OWNER_ID}, update_id, story_id, outcome, "
+        "decided_at FROM story_alerts",
+        "DROP TABLE story_alerts",
+        "ALTER TABLE story_alerts_new RENAME TO story_alerts",
+        "CREATE INDEX story_alerts_decided_at ON story_alerts (user_id, outcome, decided_at)",
+        """CREATE TABLE stale_offers_new (
+            user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            story_id INTEGER NOT NULL REFERENCES stories (id) ON DELETE CASCADE,
+            quiet_since TEXT NOT NULL,
+            offered_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, story_id, quiet_since)
+        )""",
+        f"INSERT INTO stale_offers_new SELECT {users.OWNER_ID}, story_id, quiet_since, "
+        "offered_at FROM stale_offers",
+        "DROP TABLE stale_offers",
+        "ALTER TABLE stale_offers_new RENAME TO stale_offers",
     ),
 )
 
@@ -380,41 +418,22 @@ def _story_update(row: tuple) -> StoryUpdate:
 
 
 class StoryStore:
-    """The story tables of the state file at `path` (created on first use). Use as a
-    context manager."""
+    """The story tables of the state file at `path` (created on first use), following as
+    account `user_id`. Use as a context manager."""
 
-    def __init__(self, path: str | Path = DEFAULT_STATE_FILE) -> None:
+    def __init__(
+        self, path: str | Path = DEFAULT_STATE_FILE, user_id: int = users.OWNER_ID
+    ) -> None:
         self.path = path
+        self.user_id = user_id
         try:
             # Autocommit; operations that write several rows use `_transaction`.
             self._db = sqlite3.connect(path, timeout=10.0, isolation_level=None)
             self._db.execute("PRAGMA foreign_keys = ON")
-            self._db.execute(_VERSIONS_TABLE)
-            self._migrate()
         except sqlite3.Error as exc:
             raise StateError(f"cannot open {path}: {exc}") from exc
-
-    def _migrate(self) -> None:
-        # IMMEDIATE takes the write lock before the version is read, so of two runs that
-        # open an old file at once only the first migrates it.
-        with self._transaction():
-            row = self._db.execute(
-                "SELECT version FROM schema_versions WHERE component = ?", (_COMPONENT,)
-            ).fetchone()
-            version = row[0] if row else 0
-            if version > SCHEMA_VERSION:
-                raise StateError(
-                    f"{self.path}: the stories schema is version {version}, newer than this "
-                    f"program's {SCHEMA_VERSION}"
-                )
-            for step in _MIGRATIONS[version:]:
-                for statement in step:
-                    self._db.execute(statement)
-            if version < SCHEMA_VERSION:
-                self._db.execute(
-                    "INSERT OR REPLACE INTO schema_versions (component, version) VALUES (?, ?)",
-                    (_COMPONENT, SCHEMA_VERSION),
-                )
+        users.ensure_schema(self._db, path)
+        migrate(self._db, path, _COMPONENT, _MIGRATIONS)
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
@@ -598,11 +617,16 @@ class StoryStore:
 
     def updates_since(self, moment: datetime, followed_only: bool = False) -> list[StoryUpdate]:
         """Updates recorded at or after `moment`, oldest first; with `followed_only`, only
-        those of stories followed now."""
+        those of stories the account follows now."""
         sql = f"SELECT {_UPDATE_COLUMNS} FROM story_updates WHERE recorded_at >= ?"
+        params: tuple[object, ...] = (_stamp(moment),)
         if followed_only:
-            sql += " AND story_id IN (SELECT story_id FROM subscriptions WHERE active = 1)"
-        rows = self._execute(f"{sql} ORDER BY recorded_at, id", (_stamp(moment),))
+            sql += (
+                " AND story_id IN (SELECT story_id FROM subscriptions "
+                "WHERE user_id = ? AND active = 1)"
+            )
+            params += (self.user_id,)
+        rows = self._execute(f"{sql} ORDER BY recorded_at, id", params)
         return [_story_update(row) for row in rows]
 
     def get_update(self, update_id: int) -> StoryUpdate | None:
@@ -682,8 +706,8 @@ class StoryStore:
     def subscription(self, story_id: int) -> Subscription | None:
         row = self._execute(
             "SELECT active, followed_at, unfollowed_at, muted_until FROM subscriptions "
-            "WHERE story_id = ?",
-            (story_id,),
+            "WHERE user_id = ? AND story_id = ?",
+            (self.user_id, story_id),
         ).fetchone()
         if row is None:
             return None
@@ -703,11 +727,12 @@ class StoryStore:
         with self._transaction():
             self._require(story_id)
             cursor = self._execute(
-                "INSERT INTO subscriptions (story_id, active, followed_at) VALUES (?, 1, ?) "
-                "ON CONFLICT (story_id) DO UPDATE SET active = 1, "
+                "INSERT INTO subscriptions (user_id, story_id, active, followed_at) "
+                "VALUES (?, ?, 1, ?) "
+                "ON CONFLICT (user_id, story_id) DO UPDATE SET active = 1, "
                 "followed_at = excluded.followed_at, unfollowed_at = NULL, muted_until = NULL "
                 "WHERE active = 0",
-                (story_id, followed),
+                (self.user_id, story_id, followed),
             )
         return cursor.rowcount == 1
 
@@ -716,25 +741,28 @@ class StoryStore:
         followed."""
         cursor = self._execute(
             "UPDATE subscriptions SET active = 0, unfollowed_at = ?, muted_until = NULL "
-            "WHERE story_id = ? AND active = 1",
-            (_stamp(now), story_id),
+            "WHERE user_id = ? AND story_id = ? AND active = 1",
+            (_stamp(now), self.user_id, story_id),
         )
         return cursor.rowcount == 1
 
     def mute(self, story_id: int, until: datetime) -> bool:
         """Mutes a followed story until `until`; False when it is not followed."""
         cursor = self._execute(
-            "UPDATE subscriptions SET muted_until = ? WHERE story_id = ? AND active = 1",
-            (_stamp(until), story_id),
+            "UPDATE subscriptions SET muted_until = ? "
+            "WHERE user_id = ? AND story_id = ? AND active = 1",
+            (_stamp(until), self.user_id, story_id),
         )
         return cursor.rowcount == 1
 
     def followed(self) -> list[Story]:
-        """The stories followed now (muted ones included), the most recently updated first."""
+        """The stories the account follows now (muted ones included), the most recently
+        updated first."""
         rows = self._execute(
             f"SELECT {', '.join('s.' + c for c in _STORY_COLUMNS.split(', '))} "
             "FROM stories s JOIN subscriptions sub ON sub.story_id = s.id "
-            "WHERE sub.active = 1 ORDER BY s.last_update_at DESC, s.id DESC"
+            "WHERE sub.user_id = ? AND sub.active = 1 ORDER BY s.last_update_at DESC, s.id DESC",
+            (self.user_id,),
         )
         return [_story(row) for row in rows]
 
@@ -777,14 +805,15 @@ class StoryStore:
     # --- alerts on followed stories ---------------------------------------------------------
 
     def unalerted(self) -> list[StoryUpdate]:
-        """Updates of the stories followed now, recorded after they were followed, that no
-        alert has sent or skipped yet; oldest first."""
+        """Updates of the stories the account follows now, recorded after it followed them,
+        that no alert to it has sent or skipped yet; oldest first."""
         rows = self._execute(
             f"SELECT {', '.join('u.' + c for c in _UPDATE_COLUMNS.split(', '))} "
             "FROM story_updates u JOIN subscriptions sub ON sub.story_id = u.story_id "
-            "WHERE sub.active = 1 AND u.recorded_at > sub.followed_at "
-            "AND u.id NOT IN (SELECT update_id FROM story_alerts) "
-            "ORDER BY u.recorded_at, u.id"
+            "WHERE sub.user_id = ? AND sub.active = 1 AND u.recorded_at > sub.followed_at "
+            "AND u.id NOT IN (SELECT update_id FROM story_alerts WHERE user_id = ?) "
+            "ORDER BY u.recorded_at, u.id",
+            (self.user_id, self.user_id),
         )
         return [_story_update(row) for row in rows]
 
@@ -794,24 +823,26 @@ class StoryStore:
         decided = _stamp(now)
         with self._transaction():
             self._execute_many(
-                "INSERT INTO story_alerts (update_id, story_id, outcome, decided_at) "
-                "VALUES (?, ?, ?, ?)",
-                [(u.id, u.story_id, outcome, decided) for u in updates],
+                "INSERT INTO story_alerts (user_id, update_id, story_id, outcome, decided_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(self.user_id, u.id, u.story_id, outcome, decided) for u in updates],
             )
 
     def forget_alert(self, updates: Sequence[StoryUpdate]) -> None:
         """Makes the updates wait for an alert again (one that could not be delivered)."""
         with self._transaction():
             self._execute_many(
-                "DELETE FROM story_alerts WHERE update_id = ?", [(u.id,) for u in updates]
+                "DELETE FROM story_alerts WHERE user_id = ? AND update_id = ?",
+                [(self.user_id, u.id) for u in updates],
             )
 
     def alerts_sent(self, start: datetime, end: datetime) -> int:
-        """How many alerts were sent from `start` up to (not including) `end`."""
+        """How many alerts were sent to the account from `start` up to (not including)
+        `end`."""
         row = self._execute(
             "SELECT COUNT(*) FROM (SELECT DISTINCT story_id, decided_at FROM story_alerts "
-            "WHERE outcome = 'sent' AND decided_at >= ? AND decided_at < ?)",
-            (_stamp(start), _stamp(end)),
+            "WHERE user_id = ? AND outcome = 'sent' AND decided_at >= ? AND decided_at < ?)",
+            (self.user_id, _stamp(start), _stamp(end)),
         ).fetchone()
         return row[0]
 
@@ -820,21 +851,21 @@ class StoryStore:
     def stale_offered(self, story_id: int, quiet_since: datetime) -> bool:
         """Whether the quiet stretch of the story that began at `quiet_since` was offered."""
         row = self._execute(
-            "SELECT 1 FROM stale_offers WHERE story_id = ? AND quiet_since = ?",
-            (story_id, _stamp(quiet_since)),
+            "SELECT 1 FROM stale_offers WHERE user_id = ? AND story_id = ? AND quiet_since = ?",
+            (self.user_id, story_id, _stamp(quiet_since)),
         ).fetchone()
         return row is not None
 
     def record_stale_offer(self, story_id: int, quiet_since: datetime, now: datetime) -> None:
         self._execute(
-            "INSERT OR IGNORE INTO stale_offers (story_id, quiet_since, offered_at) "
-            "VALUES (?, ?, ?)",
-            (story_id, _stamp(quiet_since), _stamp(now)),
+            "INSERT OR IGNORE INTO stale_offers (user_id, story_id, quiet_since, offered_at) "
+            "VALUES (?, ?, ?, ?)",
+            (self.user_id, story_id, _stamp(quiet_since), _stamp(now)),
         )
 
     def forget_stale_offer(self, story_id: int, quiet_since: datetime) -> None:
         """Makes the offer due again (one that could not be delivered)."""
         self._execute(
-            "DELETE FROM stale_offers WHERE story_id = ? AND quiet_since = ?",
-            (story_id, _stamp(quiet_since)),
+            "DELETE FROM stale_offers WHERE user_id = ? AND story_id = ? AND quiet_since = ?",
+            (self.user_id, story_id, _stamp(quiet_since)),
         )

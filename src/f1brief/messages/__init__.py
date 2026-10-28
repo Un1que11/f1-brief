@@ -5,8 +5,8 @@ The texts live in `<language>.toml` next to this module, one file per language w
 keys and, in each template, the same `str.format` fields (a test checks both). A `Catalog`
 gives one language's texts: the plain ones as attributes (`texts.menu_back`), the tables
 through methods (`status`, `session`, `entity_kind`, `commands`), and the formats that depend
-on the language: dates and times (always 24-hour, in Warsaw time until F32 brings per-user
-time zones), numbers (decimal comma for ru / pl) and plural forms (CLDR categories).
+on the language: dates and times (always 24-hour, in the account's time zone, Warsaw by
+default), numbers (decimal comma for ru / pl) and plural forms (CLDR categories).
 
 Until F34 every text uses the global `[digest] language` from `config.toml`.
 """
@@ -14,7 +14,7 @@ Until F34 every text uses the global `[digest] language` from `config.toml`.
 import tomllib
 from collections.abc import Callable
 from datetime import date as Date
-from datetime import datetime
+from datetime import datetime, tzinfo
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from importlib import resources
@@ -133,17 +133,18 @@ class Catalog:
             fields |= {"hour": moment.hour, "minute": moment.minute}
         return fields
 
-    def date(self, moment: datetime) -> str:
-        """The Warsaw date: "19.10.2026" (ru, pl), "19 Oct 2026" (en)."""
-        return self._format["date"].format(**self._fields(moment.astimezone(WARSAW)))
+    def date(self, moment: datetime, tz: tzinfo = WARSAW) -> str:
+        """The local (Warsaw by default) date: "19.10.2026" (ru, pl), "19 Oct 2026" (en)."""
+        return self._format["date"].format(**self._fields(moment.astimezone(tz)))
 
-    def date_time(self, moment: datetime) -> str:
-        """The Warsaw date and 24-hour time: "19.10.2026 14:05"."""
-        return self._format["date_time"].format(**self._fields(moment.astimezone(WARSAW)))
+    def date_time(self, moment: datetime, tz: tzinfo = WARSAW) -> str:
+        """The local (Warsaw by default) date and 24-hour time: "19.10.2026 14:05"."""
+        return self._format["date_time"].format(**self._fields(moment.astimezone(tz)))
 
-    def day_time(self, moment: datetime) -> str:
-        """The weekday, day and 24-hour time in Warsaw: "Пт 24.10 19:30", "Fri 24 Oct 19:30"."""
-        return self._format["day_time"].format(**self._fields(moment.astimezone(WARSAW)))
+    def day_time(self, moment: datetime, tz: tzinfo = WARSAW) -> str:
+        """The weekday, day and 24-hour time in `tz` (Warsaw by default): "Пт 24.10 19:30",
+        "Fri 24 Oct 19:30"."""
+        return self._format["day_time"].format(**self._fields(moment.astimezone(tz)))
 
     def day(self, day: Date) -> str:
         """A calendar day with its weekday: "Пт 24.10", "Fri 24 Oct"."""

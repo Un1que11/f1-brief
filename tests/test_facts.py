@@ -46,7 +46,7 @@ def test_every_section_is_collected(document: dict[str, Any]) -> None:
     assert document["missing"] == []
     assert list(document["sections"]) == list(facts.SECTIONS)
     assert all(document["sections"].values())
-    assert document["schema_version"] == 3
+    assert document["schema_version"] == 4
     assert document["sections"]["stories"] == NO_STORIES
     assert document["generated_at"] == "2026-10-15T14:00:00+02:00"
     assert document["favourites"] == {
@@ -69,7 +69,7 @@ def test_race_in_warsaw_time_across_the_clock_change(document: dict[str, Any]) -
 
     assert (race["season"], race["round"], race["name"]) == (2026, 18, "United States Grand Prix")
     assert race["circuit"]["name"] == "Circuit of the Americas"
-    sessions = {s["session"]: s["start_warsaw"] for s in race["sessions"]}
+    sessions = {s["session"]: s["start_local"] for s in race["sessions"]}
     # FP1 12:30 CDT = 17:30 UTC = 19:30 CEST; Poland is back on CET (UTC+1) by race day.
     assert sessions["FP1"] == "2026-10-23T19:30:00+02:00"
     assert sessions["Race"] == "2026-10-25T21:00:00+01:00"
@@ -331,7 +331,7 @@ def test_cli_writes_the_document(
         "missing": [{"section": "weather", "reason": "beyond the forecast range"}],
     }
     monkeypatch.setattr(cli, "_now", lambda: NOW)
-    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None, tz=None: stub)
     target = tmp_path / "facts.json"
 
     assert main(["facts", "--output", str(target)]) == 0
@@ -351,7 +351,7 @@ def test_cli_fails_when_nothing_was_collected(
         "sections": {"race": None},
         "missing": [{"section": "race", "reason": "network down"}],
     }
-    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None: stub)
+    monkeypatch.setattr(facts, "collect", lambda now, favourites, stories=None, tz=None: stub)
 
     assert main(["facts"]) == 1
     captured = capsys.readouterr()

@@ -284,7 +284,9 @@ def test_cli_reads_the_stories_since_the_last_digest(
         log.claim(2026, 17, LAST_DIGEST)
         log.mark_sent(2026, 17, LAST_DIGEST, 2)
 
-    def fake_collect(now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
+    def fake_collect(
+        now: datetime, favourites: object, stories: Any = None, tz: Any = None
+    ) -> dict[str, Any]:
         return {"sections": {"race": {"round": 18}, "stories": stories()}, "missing": []}
 
     monkeypatch.setattr(cli, "_now", lambda: NOW)
@@ -313,7 +315,9 @@ def test_cli_without_a_sent_digest_looks_back_a_fixed_window(
     state: Path,
     stories: dict[str, Story],
 ) -> None:
-    def fake_collect(now: datetime, favourites: object, stories: Any = None) -> dict[str, Any]:
+    def fake_collect(
+        now: datetime, favourites: object, stories: Any = None, tz: Any = None
+    ) -> dict[str, Any]:
         return {"sections": {"race": {"round": 18}, "stories": stories()}, "missing": []}
 
     monkeypatch.setattr(cli, "_now", lambda: NOW)

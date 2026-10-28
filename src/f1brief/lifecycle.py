@@ -8,7 +8,8 @@ story's latest update, or from when it was followed if that is later, so a story
 after a long silence is not offered at once.
 Each stretch is offered once: a later update starts a new one.
 
-Offers wait while the story is muted and in the quiet hours (23:00-08:00 Warsaw), like alerts,
+Offers wait while the story is muted and in the account's quiet hours (`alerts.QuietHours`),
+like alerts,
 but do not count towards the alerts' daily limit: there is at most one per story per stretch.
 An offer is recorded before it is sent, so it goes out at most once; one Telegram refuses is
 made due again. `plan` decides, `deliver` sends and records; the clock is always passed in.
@@ -17,12 +18,13 @@ made due again. `plan` decides, `deliver` sends and records; the clock is always
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
-from f1brief.alerts import is_quiet
+from f1brief.alerts import DEFAULT_QUIET, QuietHours, is_quiet
 from f1brief.bot import UNFOLLOW, BotError, Button, Reply
 from f1brief.bot_texts import texts_for
 from f1brief.messages import DEFAULT_LANGUAGE
+from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore
 from f1brief.telegram_html import escape
 
@@ -48,8 +50,13 @@ class Plan:
         return "offers to unfollow quiet stories: " + ", ".join(parts)
 
 
-def plan(store: StoryStore, now: datetime, quiet_after: timedelta = QUIET_AFTER) -> Plan:
-    """The offers due at `now`, the longest-quiet story first."""
+def plan(
+    store: StoryStore,
+    now: datetime,
+    quiet_after: timedelta = QUIET_AFTER,
+    hours: QuietHours = DEFAULT_QUIET,
+) -> Plan:
+    """The offers due at `now` to the store's account, the longest-quiet story first."""
     due: list[Offer] = []
     for story in store.followed():
         subscription = store.subscription(story.id)
@@ -60,12 +67,12 @@ def plan(store: StoryStore, now: datetime, quiet_after: timedelta = QUIET_AFTER)
             continue
         due.append(Offer(story, quiet_since))
     due.sort(key=lambda o: (o.quiet_since, o.story.id))
-    if is_quiet(now):
+    if is_quiet(now, hours):
         return Plan((), tuple(due))
     return Plan(tuple(due), ())
 
 
-def text(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+def text(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE, tz: tzinfo = WARSAW) -> str:
     texts = texts_for(language)
     story = offer.story
     offer_text = texts.stale_offer.format(
@@ -73,15 +80,17 @@ def text(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE) -> str:
         title=story.title,
         status=texts.status(story.status),
         days=texts.days((now - offer.quiet_since).days),
-        date=texts.date(story.last_update_at),
+        date=texts.date(story.last_update_at, tz),
     )
     return "\n".join([offer_text, "", texts.timeline_link.format(id=story.id)])
 
 
-def reply(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE) -> Reply:
+def reply(
+    offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE, tz: tzinfo = WARSAW
+) -> Reply:
     """The offer as one Telegram HTML message (the text escaped) with the unfollow button."""
     button = Button(texts_for(language).button_unfollow, f"{UNFOLLOW}:{offer.story.id}")
-    return Reply(escape(text(offer, now, language)), ((button,),))
+    return Reply(escape(text(offer, now, language, tz)), ((button,),))
 
 
 def _warn(message: str) -> None:
@@ -95,13 +104,14 @@ def deliver(
     send: Callable[[Reply], None],
     warn: Callable[[str], None] = _warn,
     language: str = DEFAULT_LANGUAGE,
+    tz: tzinfo = WARSAW,
 ) -> bool:
     """Sends the planned offers in order. When Telegram refuses one, it and the rest wait
     for the next run. False when an offer failed."""
     for offer in planned.send:
         store.record_stale_offer(offer.story.id, offer.quiet_since, now)
         try:
-            send(reply(offer, now, language))
+            send(reply(offer, now, language, tz))
         except BotError as exc:
             store.forget_stale_offer(offer.story.id, offer.quiet_since)
             warn(f"offer to unfollow story #{offer.story.id} not sent: {exc}")

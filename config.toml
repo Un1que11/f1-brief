@@ -1,5 +1,7 @@
 # F1 Brief settings. No secrets here: the Telegram token and chat id live in .env.
 # Read by `f1brief.config`; every command takes `--config PATH` (default: ./config.toml).
+# These are the defaults of every account: what an account changes from the bot (its
+# favourites, for one) is kept in the state file, see `f1brief config`.
 
 [digest]
 # Language of the digest, the off-season summary and the message after qualifying:
@@ -7,9 +9,15 @@
 language = "ru"
 # The send window opens at local midnight this many days before the local date of FP1.
 days_before_fp1 = 2
-# IANA time zone for session times, send windows and quiet hours. Only Europe/Warsaw is
-# accepted for now: the code still uses Warsaw time directly.
+# IANA time zone for session times, send windows and quiet hours, e.g. "America/New_York".
 timezone = "Europe/Warsaw"
+
+# Story alerts: at most max_per_day a day, none from quiet_start to quiet_end (local time,
+# 24-hour HH:MM; equal times turn the quiet hours off).
+[alerts]
+max_per_day = 3
+quiet_start = "23:00"
+quiet_end = "08:00"
 
 # Favourites are lists: add or remove entries freely. Every collector (form, teammate
 # comparison, pace, track history, news, story detection) iterates over them.

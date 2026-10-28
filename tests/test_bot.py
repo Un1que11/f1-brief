@@ -14,7 +14,7 @@ import httpx
 import pytest
 from conftest import FIXTURES
 
-from f1brief import bot, bot_texts, config
+from f1brief import bot, bot_texts, config, users
 from f1brief import telegram_html as th
 from f1brief import telegram_send as ts
 from f1brief.bot import Answer, Bot, Button, Reply
@@ -878,9 +878,12 @@ def test_dry_run_answers_the_saved_updates_and_keeps_nothing(
     assert "would add Ferrari, Hamilton" in err
     assert err.count("ignored chat 515151") == 1  # the stranger's /unfollow
     assert "6 update(s), nothing sent or stored" in err
-    # Nothing kept: no subscription, config untouched.
+    # Nothing kept: no subscription, no favourites of the owner's own, config untouched.
     with StoryStore(cli_dir / "state.db") as opened:
         assert opened.subscription(1) is None
+    with users.UserStore(cli_dir / "state.db") as accounts:
+        assert accounts.settings(users.OWNER_ID).favourites is None
+        assert accounts.owner().chat_id is None  # a dry run binds no chat
     assert (cli_dir / "config.toml").read_text(encoding="utf-8") == config_before
 
 
@@ -953,7 +956,7 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
         seen["days_before"] = handler.days_before
         seen["chat"] = handler.chat_id
         seen["teams"] = handler.favourites.team_ids
-        # The entities button writes the real config file outside a dry run.
+        # Outside a dry run the entities button stores the owner's favourites (F32).
         handler.store.follow(1, NOW)
         handler.handle(press("favs:1"), NOW)
         raise KeyboardInterrupt
@@ -968,7 +971,12 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
         "chat": CHAT,
         "teams": ("mclaren", "haas"),
     }
-    favourites = config.load(cli_dir / "config.toml").favourites
+    # config.toml keeps the defaults; the owner's own favourites are in the state file.
+    assert config.load(cli_dir / "config.toml").favourites.team_ids == ("mclaren", "haas")
+    with users.UserStore(cli_dir / "state.db") as accounts:
+        owner = accounts.owner()
+        favourites = accounts.favourites(owner.id, config.DEFAULT_FAVOURITES)
+    assert owner.chat_id == CHAT
     assert favourites.team_ids == ("mclaren", "haas", "ferrari")
     assert "hamilton" in favourites.driver_ids
 
