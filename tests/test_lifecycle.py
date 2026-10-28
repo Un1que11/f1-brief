@@ -17,6 +17,7 @@ from f1brief import cli, digest, lifecycle
 from f1brief import story_detection as sd
 from f1brief import telegram_send as ts
 from f1brief.bot import Bot, BotError, Reply
+from f1brief.bot_texts import texts_for
 from f1brief.cli import main
 from f1brief.config import DEFAULT_FAVOURITES
 from f1brief.stories import (
@@ -355,7 +356,7 @@ def test_an_offer_telegram_refuses_is_due_again(store: StoryStore) -> None:
     ],
 )
 def test_days_in_russian(days: int, text: str) -> None:
-    assert lifecycle.days_ru(days) == text
+    assert texts_for("ru").days(days) == text
 
 
 def test_the_offer_names_the_story_and_carries_the_unfollow_button(store: StoryStore) -> None:
@@ -388,10 +389,13 @@ def test_the_timeline_shows_which_update_changed_the_status(store: StoryStore) -
     handler = Bot(store, CHAT, DEFAULT_FAVOURITES, lambda teams, drivers: DEFAULT_FAVOURITES)
     text = text_of(handler.handle(message(f"/story {rumour.id}"), MORNING))
     lines = text.split("\n")
-    first = lines.index("Синтетика: изменение 100.")
-    assert lines[first + 1 : first + 3] == ["Статус → слух", "https://example.com/story-100"]
-    second = lines.index("Синтетика: изменение 2.")
-    assert lines[second + 1 : second + 3] == ["Статус → подтверждено", update(2).url]
+    link = '<a href="{url}">Example News</a>'
+    first = lines.index(
+        "Синтетика: изменение 100. · " + link.format(url="https://example.com/story-100")
+    )
+    assert lines[first + 1] == "Статус → слух"
+    second = lines.index("Синтетика: изменение 2. · " + link.format(url=update(2).url))
+    assert lines[second + 1] == "Статус → подтверждено"
 
 
 # --- the command line -----------------------------------------------------------------------
@@ -477,7 +481,7 @@ def test_alerts_go_before_offers_and_a_refused_alert_holds_the_offers(
     monkeypatch.setattr(cli, "_telegram_client", cli_dir.client)
     assert main(["alerts"]) == 0
     assert [m["text"].split("\n")[0] for m in cli_dir.sent] == [
-        "Новое в сюжете #2 «Сюжет 2» (слух)",
+        "🔔 <b>Сюжет 2</b>",
         "Сюжет #1 «Сюжет 1» (слух): нет новостей уже 60 дней, последнее обновление — 20.08.2026.",
     ]
 

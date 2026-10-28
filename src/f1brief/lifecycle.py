@@ -2,9 +2,10 @@
 
 A story's status moves only with a sourced update and only forward (`stories.can_move`); this
 module covers the other half of "Lifecycle" in CLAUDE.md. A followed story with no update for
-`QUIET_AFTER` gets one message offering to unfollow it, with the "Отписаться" button the bot
-(F23) answers. The quiet stretch counts from the story's latest update, or from when it was
-followed if that is later, so a story followed after a long silence is not offered at once.
+`QUIET_AFTER` gets one message offering to unfollow it, with the unfollow button the bot
+(F23) answers, in the bot's language (F30, `bot_texts`). The quiet stretch counts from the
+story's latest update, or from when it was followed if that is later, so a story followed
+after a long silence is not offered at once.
 Each stretch is offered once: a later update starts a new one.
 
 Offers wait while the story is muted and in the account's quiet hours (`alerts.QuietHours`),
@@ -20,10 +21,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
 
 from f1brief.alerts import DEFAULT_QUIET, QuietHours, is_quiet
-from f1brief.bot import STATUS_RU, UNFOLLOW, BotError, Button, Reply
-from f1brief.bot_texts import days_ru
+from f1brief.bot import UNFOLLOW, BotError, Button, Reply
+from f1brief.bot_texts import texts_for
+from f1brief.messages import DEFAULT_LANGUAGE
 from f1brief.schedule import WARSAW
 from f1brief.stories import Story, StoryStore
+from f1brief.telegram_html import escape
 
 QUIET_AFTER = timedelta(days=60)
 
@@ -69,24 +72,25 @@ def plan(
     return Plan(tuple(due), ())
 
 
-def text(offer: Offer, now: datetime, tz: tzinfo = WARSAW) -> str:
+def text(offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE, tz: tzinfo = WARSAW) -> str:
+    texts = texts_for(language)
     story = offer.story
-    last = story.last_update_at.astimezone(tz).strftime("%d.%m.%Y")
-    return "\n".join(
-        [
-            f"Сюжет #{story.id} «{story.title}» ({STATUS_RU[story.status]}): "
-            f"нет новостей уже {days_ru((now - offer.quiet_since).days)}, "
-            f"последнее обновление — {last}.",
-            "Отписаться? Если хочешь следить дальше, ничего не нажимай: новости по нему "
-            "придут как обычно.",
-            "",
-            f"Хронология: /story {story.id}",
-        ]
+    offer_text = texts.stale_offer.format(
+        id=story.id,
+        title=story.title,
+        status=texts.status(story.status),
+        days=texts.days((now - offer.quiet_since).days),
+        date=texts.date(story.last_update_at, tz),
     )
+    return "\n".join([offer_text, "", texts.timeline_link.format(id=story.id)])
 
 
-def reply(offer: Offer, now: datetime, tz: tzinfo = WARSAW) -> Reply:
-    return Reply(text(offer, now, tz), ((Button("Отписаться", f"{UNFOLLOW}:{offer.story.id}"),),))
+def reply(
+    offer: Offer, now: datetime, language: str = DEFAULT_LANGUAGE, tz: tzinfo = WARSAW
+) -> Reply:
+    """The offer as one Telegram HTML message (the text escaped) with the unfollow button."""
+    button = Button(texts_for(language).button_unfollow, f"{UNFOLLOW}:{offer.story.id}")
+    return Reply(escape(text(offer, now, language, tz)), ((button,),))
 
 
 def _warn(message: str) -> None:
@@ -99,6 +103,7 @@ def deliver(
     now: datetime,
     send: Callable[[Reply], None],
     warn: Callable[[str], None] = _warn,
+    language: str = DEFAULT_LANGUAGE,
     tz: tzinfo = WARSAW,
 ) -> bool:
     """Sends the planned offers in order. When Telegram refuses one, it and the rest wait
@@ -106,7 +111,7 @@ def deliver(
     for offer in planned.send:
         store.record_stale_offer(offer.story.id, offer.quiet_since, now)
         try:
-            send(reply(offer, now, tz))
+            send(reply(offer, now, language, tz))
         except BotError as exc:
             store.forget_stale_offer(offer.story.id, offer.quiet_since)
             warn(f"offer to unfollow story #{offer.story.id} not sent: {exc}")

@@ -37,6 +37,8 @@ from f1brief.schedule import ScheduleError, SessionKind
 from f1brief.send_log import StateError
 from f1brief.stories import StoryStore
 
+RU_MENU = bot.main_menu(bot_texts.texts_for("ru"))
+
 # NOW is Monday 19.10.2026 11:00 in Warsaw: the next round is the United States GP (round 18,
 # FP1 Fri 23.10 19:30 Warsaw), whose send window opens Wed 21.10 00:00 Warsaw.
 USA_WINDOW_OPENS = datetime(2026, 10, 20, 22, tzinfo=UTC)
@@ -110,11 +112,11 @@ def test_start_explains_the_bot_and_when_the_next_digest_comes(ui: Bot) -> None:
     assert lines[3] == (
         "Следующий дайджест придёт Ср 21.10 00:00 по Варшаве — к этапу «United States Grand Prix»."
     )
-    assert reply.buttons == bot.MAIN_MENU
+    assert reply.buttons == RU_MENU
 
 
 def test_the_main_menu_has_the_five_screens() -> None:
-    labels = [b.text for row in bot.MAIN_MENU for b in row]
+    labels = [b.text for row in RU_MENU for b in row]
     assert labels == ["📰 Сюжеты", "🗂 Архив", "🏁 Следующая гонка", "⭐ Избранное", "❓ Помощь"]
 
 
@@ -148,7 +150,7 @@ def test_start_without_the_calendar_still_answers(ui: Bot, warnings: list[str]) 
     ui.calendar = unavailable
     [reply] = ui.handle(message("/start"), NOW)
     assert reply.text.endswith("Календарь сейчас недоступен, попробуй позже.")
-    assert reply.buttons == bot.MAIN_MENU
+    assert reply.buttons == RU_MENU
     assert warnings == ["calendar: Jolpica: HTTP 503"]
 
 
@@ -171,7 +173,7 @@ def test_start_after_the_last_race(ui: Bot) -> None:
     [
         ("menu:stories", "Сюжетов пока нет"),
         ("menu:archive", "Архив пуст"),
-        ("menu:next", "🏁 Этап 18: United States Grand Prix (2026)"),
+        ("menu:next", "🏁 <b>Этап 18: United States Grand Prix (2026)</b>"),
         ("menu:favs", "⭐ Избранное"),
         ("menu:help", "/stories — сюжеты"),
     ],
@@ -187,7 +189,7 @@ def test_each_menu_button_opens_its_screen_with_a_way_back(
 
 def test_the_menu_button_shows_the_menu(ui: Bot) -> None:
     actions = ui.handle(press("menu:main"), NOW)
-    assert actions == [Answer("cb1"), Reply(bot_texts.MENU_PROMPT, bot.MAIN_MENU)]
+    assert actions == [Answer("cb1"), Reply(bot_texts.texts_for("ru").menu_prompt, RU_MENU)]
 
 
 def test_the_archive_button_sends_the_page_too(store: StoryStore, ui: Bot) -> None:
@@ -214,7 +216,9 @@ def test_a_story_button_opens_its_timeline(store: StoryStore, ui: Bot) -> None:
     story = seed(store)
     actions = ui.handle(press(f"story:{story.id}"), NOW)
     assert actions[0] == Answer("cb1")
-    assert text_of(actions).startswith(f"#{story.id} Бирман в Ferrari в 2028?\nСтатус: слух")
+    assert text_of(actions).startswith(
+        f"📰 <b>#{story.id} Бирман в Ferrari в 2028?</b>\nСтатус: 🟡 слух"
+    )
     assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}"), BACK]
 
 
@@ -272,12 +276,13 @@ def test_next_shows_the_round_the_sessions_in_warsaw_and_the_digest(ui: Bot) -> 
     actions = ui.handle(message("/next"), NOW)
 
     lines = text_of(actions).splitlines()
+    # The schedule is an aligned <pre> block (F41).
     assert lines[:5] == [
-        "🏁 Этап 18: United States Grand Prix (2026)",
+        "🏁 <b>Этап 18: United States Grand Prix (2026)</b>",
         "Circuit of the Americas, Austin, USA",
         "",
-        "Расписание (время варшавское):",
-        "Пт 23.10 19:30 — Практика 1",
+        "Расписание, время варшавское:",
+        "<pre>Пт 23.10 19:30  Практика 1",
     ]
     assert lines[-3:] == [
         "",
@@ -290,12 +295,12 @@ def test_next_shows_the_round_the_sessions_in_warsaw_and_the_digest(ui: Bot) -> 
 def test_next_names_every_session_in_russian_with_the_dst_change(ui: Bot) -> None:
     sessions = text_of(ui.handle(message("/next"), NOW)).splitlines()[4:9]
     assert sessions == [
-        "Пт 23.10 19:30 — Практика 1",
-        "Пт 23.10 23:00 — Практика 2",
-        "Сб 24.10 19:30 — Практика 3",
-        "Сб 24.10 23:00 — Квалификация",
+        "<pre>Пт 23.10 19:30  Практика 1",
+        "Пт 23.10 23:00  Практика 2",
+        "Сб 24.10 19:30  Практика 3",
+        "Сб 24.10 23:00  Квалификация",
         # Warsaw leaves summer time on 25.10: the race is at 20:00 UTC, 21:00 Warsaw.
-        "Вс 25.10 21:00 — Гонка",
+        "Вс 25.10 21:00  Гонка</pre>",
     ]
 
 
@@ -324,7 +329,8 @@ def test_next_with_a_session_time_to_be_confirmed(ui: Bot, races: list[schedule.
     tbc = schedule.Session(fp1.kind, fp1.date, None)
     ui.calendar = lambda: [type(race)(**{**vars(race), "sessions": (tbc, *race.sessions[1:])})]
     text = text_of(ui.handle(message("/next"), NOW))
-    assert "Пт 23.10, время уточняется — Практика 1" in text
+    assert "<pre>Пт 23.10 --:--  Практика 1\n" in text
+    assert "</pre>\n--:-- — время уточняется" in text
 
 
 def test_next_without_the_calendar_or_races(ui: Bot) -> None:
@@ -336,8 +342,10 @@ def test_next_without_the_calendar_or_races(ui: Bot) -> None:
     assert text_of(ui.handle(message("/next"), NOW)) == "В календаре сезона больше нет гонок."
 
 
-def test_every_session_kind_has_a_russian_name() -> None:
-    assert set(bot_texts.SESSIONS) == set(SessionKind)
+def test_every_session_kind_has_a_name_in_every_language() -> None:
+    for language in config.LANGUAGES:
+        texts = bot_texts.texts_for(language)
+        assert all(texts.session(kind) for kind in SessionKind)
 
 
 # --- favourites -------------------------------------------------------------------------------
@@ -568,7 +576,7 @@ def test_dry_run_start_next_and_removal_keep_the_config(
     out, err = capsys.readouterr()
     assert "Следующий дайджест придёт Ср 21.10 00:00 по Варшаве" in out
     assert "[📰 Сюжеты] [🗂 Архив]" in out
-    assert "🏁 Этап 18: United States Grand Prix (2026)" in out
+    assert "🏁 <b>Этап 18: United States Grand Prix (2026)</b>" in out
     assert "Убрал из избранного: Haas." in out
     assert "would remove haas" in err
     assert (cli_dir / "config.toml").read_text(encoding="utf-8") == before
@@ -625,7 +633,7 @@ def test_the_bot_keeps_every_text_in_bot_texts() -> None:
 def test_every_callback_fits_telegrams_64_bytes(store: StoryStore, ui: Bot) -> None:
     story = seed(store)
     store.follow(story.id, NOW)
-    keyboards: list[Any] = [bot.MAIN_MENU]
+    keyboards: list[Any] = [RU_MENU]
     for update in (message("/stories"), message("/favourites"), message(f"/story {story.id}")):
         keyboards += [r.buttons for r in ui.handle(update, NOW) if isinstance(r, Reply)]
     data = [b.data for keyboard in keyboards for row in keyboard for b in row]

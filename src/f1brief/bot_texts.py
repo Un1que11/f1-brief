@@ -1,252 +1,111 @@
-# Russian UI texts: Cyrillic letters that look like Latin ones are intended here.
-# ruff: noqa: RUF001
-"""Every text the Telegram bot (F23, F40) shows: replies, button labels, the short answers to
-pressed buttons and the command menu, with the date formats they use.
+"""The texts of the Telegram bot (F23, F40), its story alerts (F24) and the offer to unfollow
+a quiet story (F26), from the message catalog (F30, `f1brief.messages`).
 
-They live here, apart from the bot's logic, so the message catalog (F30) can take them over
-as they are: plain strings, `str.format` templates with named fields, and a few small
-functions where a text depends on a number or a date. Russian only for now; times are the
-account's local time (Warsaw by default, F32), 24-hour.
+`texts_for(language)` gives a `Texts`: the catalog of that language (plain texts as attributes,
+statuses, session names, date and number formats, plural forms) plus the few texts that are
+put together from several entries. Times are the account's local time (Warsaw by default,
+F32), 24-hour. Until F34 the language is
+the global `[digest] language` from `config.toml`. The texts are plain: the bot escapes them for
+Telegram HTML (F41); only `next_race` lays its text out as `telegram_html` blocks, and the
+icons below are the same in every language.
 """
 
 from collections.abc import Sequence
-from datetime import datetime, tzinfo
+from datetime import tzinfo
+from functools import cache
 
 from f1brief import jolpica
-from f1brief.schedule import WARSAW, Race, SessionKind
+from f1brief import telegram_html as th
+from f1brief.messages import DEFAULT_LANGUAGE, Catalog
+from f1brief.schedule import WARSAW, Race
+from f1brief.stories import StoryStatus
 
-# --- formats ------------------------------------------------------------------------------
-
-WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
-
-SESSIONS = {
-    SessionKind.FP1: "Практика 1",
-    SessionKind.FP2: "Практика 2",
-    SessionKind.FP3: "Практика 3",
-    SessionKind.SPRINT_QUALIFYING: "Спринт-квалификация",
-    SessionKind.SPRINT: "Спринт",
-    SessionKind.QUALIFYING: "Квалификация",
-    SessionKind.RACE: "Гонка",
+# The status chips of a story (alerts, the timeline) and the cards' icons (F41).
+STATUS_ICONS = {
+    StoryStatus.RUMOR: "🟡",
+    StoryStatus.DEVELOPING: "🟠",
+    StoryStatus.CONFIRMED: "🟢",
+    StoryStatus.DENIED: "🔴",
+    StoryStatus.RESOLVED: "⚪",
 }
-
-
-def date(moment: datetime, tz: tzinfo = WARSAW) -> str:
-    """ "19.10.2026", in local time."""
-    return moment.astimezone(tz).strftime("%d.%m.%Y")
-
-
-def date_time(moment: datetime, tz: tzinfo = WARSAW) -> str:
-    """ "19.10.2026 14:05", in local time."""
-    return moment.astimezone(tz).strftime("%d.%m.%Y %H:%M")
-
-
-def day_time(moment: datetime, tz: tzinfo = WARSAW) -> str:
-    """ "Пт 24.10 19:30", in local time."""
-    local = moment.astimezone(tz)
-    return f"{WEEKDAYS[local.weekday()]} {local:%d.%m %H:%M}"
+ICON_STORY = "📰"
+ICON_ALERT = "🔔"
+ICON_RACE = "🏁"
+NO_TIME = "--:--"
 
 
 def _is_warsaw(tz: tzinfo) -> bool:
     return str(tz) == str(WARSAW)
 
 
-def by_zone(tz: tzinfo) -> str:
-    """ "по Варшаве", or "по времени America/New_York" for another zone."""
-    return "по Варшаве" if _is_warsaw(tz) else f"по времени {tz}"
+class Texts(Catalog):
+    """One language's catalog with the bot's composed texts."""
 
-
-def zone_note(tz: tzinfo) -> str:
-    """ "время варшавское", or "время America/New_York"."""
-    return "время варшавское" if _is_warsaw(tz) else f"время {tz}"
-
-
-def days_ru(n: int) -> str:
-    """ "1 день", "3 дня", "60 дней"."""
-    if n % 10 == 1 and n % 100 != 11:
-        word = "день"
-    elif n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
-        word = "дня"
-    else:
-        word = "дней"
-    return f"{n} {word}"
-
-
-# --- the main menu ------------------------------------------------------------------------
-
-MENU_STORIES = "📰 Сюжеты"
-MENU_ARCHIVE = "🗂 Архив"
-MENU_NEXT = "🏁 Следующая гонка"
-MENU_FAVOURITES = "⭐ Избранное"
-MENU_HELP = "❓ Помощь"
-MENU_BACK = "← Меню"
-
-MENU_PROMPT = "Я понимаю кнопки и команды. Что показать?"
-
-
-def start(days_before: int, next_digest: str) -> str:
-    """The greeting for /start: what the bot does and when the next digest comes."""
-    if days_before == 0:
-        when = "в день первой практики"
-    else:
-        when = f"за {days_ru(days_before)} до первой практики"
-    return "\n".join(
-        [
-            f"Привет! Я присылаю F1-дайджест {when}: что изменилось с прошлой гонки, как дела "
-            "у твоих команд и гонщиков и чего ждать на уикенде.",
-            "После квалификации — короткое сообщение о том, как она прошла у избранных.",
-            "Новости по сюжетам, за которыми ты следишь (контракты, переходы, слухи), приходят "
-            "сразу, а ночью (23:00–08:00) — утром.",
-            next_digest,
-        ]
-    )
-
-
-HELP = (
-    "Команды:\n"
-    "/start — что умеет бот и меню\n"
-    "/stories — сюжеты, за которыми ты следишь, и недавние\n"
-    "/story <номер> — хронология сюжета с источниками\n"
-    "/follow <номер> — следить за сюжетом\n"
-    "/unfollow <номер> — отписаться (сюжет останется в архиве)\n"
-    "/mute <номер> <дни> — без уведомлений на N дней\n"
-    "/archive — все сюжеты, включая завершённые\n"
-    "/next — следующая гонка и когда придёт дайджест\n"
-    "/favourites — избранные команды и гонщики\n"
-    "\n"
-    "Всё это есть и на кнопках: /start."
-)
-
-UNKNOWN_COMMAND = "Не знаю команду /{name}."
-
-# The commands under the "/" button in Telegram (setMyCommands): (command, description).
-COMMANDS = (
-    ("start", "Что умеет бот и меню"),
-    ("stories", "Сюжеты: твои и недавние"),
-    ("archive", "Все сюжеты, включая завершённые"),
-    ("next", "Следующая гонка и дайджест к ней"),
-    ("favourites", "Избранные команды и гонщики"),
-    ("help", "Все команды"),
-)
-
-# --- the next race and the digest ---------------------------------------------------------
-
-CALENDAR_UNAVAILABLE = "Календарь сейчас недоступен, попробуй позже."
-NO_RACES = "В календаре сезона больше нет гонок."
-NO_DIGEST_PLANNED = "Следующий дайджест — когда в календаре появится новая гонка."
-NEXT_DIGEST_AT = "Следующий дайджест придёт {when} {zone} — к этапу «{race}»."
-NEXT_DIGEST_SOON = "Дайджест к этапу «{race}» придёт в течение часа."
-DIGEST_SENT = "Дайджест к этому этапу отправлен {when}."
-DIGEST_AT = "Дайджест к этому этапу придёт {when} {zone}."
-DIGEST_SOON = "Дайджест к этому этапу придёт в течение часа."
-DIGEST_NOT_SENT = "Дайджест к этому этапу не отправлялся."
-
-
-def next_race(race: Race, digest: str, tz: tzinfo = WARSAW) -> str:
-    """Round, circuit and session times in local time, then the line about the digest."""
-    lines = [
-        f"🏁 Этап {race.round}: {race.name} ({race.season})",
-        f"{race.circuit.name}, {race.circuit.locality}, {race.circuit.country}",
-        "",
-        f"Расписание ({zone_note(tz)}):",
-    ]
-    for session in race.sessions:
-        if session.start_utc is not None:
-            when = day_time(session.start_utc, tz)
+    def start(self, days_before: int, next_digest: str) -> str:
+        """The greeting for /start: what the bot does and when the next digest comes."""
+        if days_before == 0:
+            when = self.start_same_day
         else:
-            when = f"{WEEKDAYS[session.date.weekday()]} {session.date:%d.%m}, время уточняется"
-        lines.append(f"{when} — {SESSIONS[session.kind]}")
-    lines += ["", digest, f"Источник: {jolpica.SOURCE_NAME}."]
-    return "\n".join(lines)
+            when = self.start_days_before.format(days=self.days(days_before))
+        return self.greeting.format(when=when, next_digest=next_digest)
 
+    def button_mute(self, days: int) -> str:
+        return self.button_mute_days.format(days=self.days(days))
 
-# --- favourites ---------------------------------------------------------------------------
+    def by_zone(self, tz: tzinfo) -> str:
+        """ "по Варшаве", or "по времени America/New_York" for another zone."""
+        return self.zone_by_warsaw if _is_warsaw(tz) else self.zone_by_other.format(tz=tz)
 
-FAVOURITES_TITLE = "⭐ Избранное — по нему собирается дайджест."
-FAVOURITE_TEAMS = "Команды: {names}"
-FAVOURITE_DRIVERS = "Гонщики: {names}"
-NONE = "нет"
-FAVOURITES_HINT = (
-    "Убрать — кнопкой ниже. Добавить можно из сюжета: после «Следить» появится кнопка "
-    "«Следить за …»."
-)
-REMOVE_BUTTON = "✕ {name}"
-REMOVED = "Убрал из избранного: {name}. Вернуть можно кнопкой из сюжета."
-ALREADY_REMOVED = "{name} уже нет в избранном."
-NOT_REMOVED = "Не получилось убрать из избранного: {error}"
-ANSWER_REMOVED = "Убрано"
+    def zone_note(self, tz: tzinfo) -> str:
+        """ "время варшавское", or "время America/New_York"."""
+        return self.zone_note_warsaw if _is_warsaw(tz) else self.zone_note_other.format(tz=tz)
 
+    def status_chip(self, status: StoryStatus) -> str:
+        """ "🟡 слух"."""
+        return f"{STATUS_ICONS[status]} {self.status(status)}"
 
-def favourites(teams: Sequence[str], drivers: Sequence[str]) -> str:
-    return "\n".join(
-        [
-            FAVOURITES_TITLE,
-            "",
-            FAVOURITE_TEAMS.format(names=", ".join(teams) or NONE),
-            FAVOURITE_DRIVERS.format(names=", ".join(drivers) or NONE),
-            "",
-            FAVOURITES_HINT,
+    def next_race(self, race: Race, digest: str, tz: tzinfo = WARSAW) -> list[th.Block]:
+        """Round and circuit, the session times in local time as an aligned table, then the
+        line about the digest and the source."""
+        title = self.race_title.format(round=race.round, name=race.name, season=race.season)
+        top = th.Block(
+            (
+                th.Line((th.Span(f"{ICON_RACE} "), th.Span(title, bold=True))),
+                th.plain(f"{race.circuit.name}, {race.circuit.locality}, {race.circuit.country}"),
+            )
+        )
+        rows: list[str] = []
+        for session in race.sessions:
+            if session.start_utc is not None:
+                when = self.day_time(session.start_utc, tz)
+            else:
+                when = f"{self.day(session.date)} {NO_TIME}"
+            rows.append(f"{when}  {self.session(session.kind)}")
+        lines = [
+            th.plain(self.race_schedule.format(zone=self.zone_note(tz))),
+            th.Line((th.Span("\n".join(rows), pre=True),)),
         ]
-    )
+        if any(session.start_utc is None for session in race.sessions):
+            lines.append(th.plain(self.race_time_tbc.format(no_time=NO_TIME)))
+        bottom = th.Block(
+            (th.plain(digest), th.plain(self.race_source.format(source=jolpica.SOURCE_NAME)))
+        )
+        return [top, th.Block(tuple(lines)), bottom]
+
+    def favourites(self, teams: Sequence[str], drivers: Sequence[str]) -> str:
+        return "\n".join(
+            [
+                self.favourites_title,
+                "",
+                self.favourite_teams.format(names=", ".join(teams) or self.none),
+                self.favourite_drivers.format(names=", ".join(drivers) or self.none),
+                "",
+                self.favourites_hint,
+            ]
+        )
 
 
-# --- stories ------------------------------------------------------------------------------
-
-NO_STORIES = "Сюжетов пока нет. Все сюжеты: /archive"
-FOLLOWING = "Ты следишь:"
-FOLLOWING_NONE = "Ты пока не следишь ни за одним сюжетом."
-RECENT = "Недавние сюжеты:"
-MUTED_UNTIL = " (без уведомлений до {date})"
-STORIES_HINT = "Нажми на сюжет, чтобы открыть хронологию."
-STORY_LINE = "{title} — {status}, {date}"
-STORY_LINE_NUMBERED = "#{id} {title} — {status}, {date}"
-ICON_FOLLOWED = "🔔"
-ICON_MUTED = "🔕"
-
-ARCHIVE_EMPTY = "Архив пуст: сюжетов пока нет."
-ARCHIVE_TITLE = "Все сюжеты ({count}):"
-ARCHIVE_FOLLOWED = " — следишь"
-ARCHIVE_HINT = "Подробнее: /story <номер>"
-ARCHIVE_CAPTION = (
-    "Архив страницей: открой файл в браузере. Фильтры: слежу / все / завершённые, "
-    "у каждого обновления — ссылка на источник."
-)
-
-STORY_TITLE = "#{id} {title}"
-STORY_STATUS = "Статус: {status} · {following}"
-STORY_FOLLOWED = "ты следишь"
-STORY_NOT_FOLLOWED = "не следишь"
-TIMELINE = "Хронология:"
-TIMELINE_ENTRY = "{date} — {headline} ({source})"
-STATUS_CHANGE = "Статус → {status}"
-
-STORY_NUMBER_MISSING = "Укажи номер сюжета, например: /{command} 3"
-STORY_UNKNOWN = "Нет сюжета {arg}. Все сюжеты: /archive"
-
-FOLLOWED = "Теперь ты следишь за сюжетом #{id} «{title}»."
-ALREADY_FOLLOWED = "Ты уже следишь за сюжетом #{id} «{title}»."
-UNFOLLOWED = "Ты больше не следишь за сюжетом #{id} «{title}». Он остаётся в архиве: /story {id}"
-NOT_FOLLOWED = "Ты не следишь за сюжетом #{id}."
-MUTE_DAYS = "Укажи число дней от 1 до {max}, например: /mute {id} 7"
-MUTE_NOT_FOLLOWED = "Ты не следишь за сюжетом #{id}. Сначала: /follow {id}"
-MUTED = "Сюжет #{id} «{title}» без уведомлений до {until}."
-
-BUTTON_FOLLOW = "Следить"
-BUTTON_UNFOLLOW = "Отписаться"
-BUTTON_FOLLOW_ENTITIES = "Следить за {names}"
-
-
-def button_mute(days: int) -> str:
-    return f"Без уведомлений на {days_ru(days)}"
-
-
-ADDED = "Добавил в избранное: {names}. Они появятся в следующем дайджесте."
-NOT_ADDED = "Не получилось добавить в избранное: {error}"
-
-# Short answers shown in the client when a button is pressed.
-ANSWER_GONE = "Этой кнопки больше нет"
-ANSWER_FOLLOWED = "Следишь"
-ANSWER_UNFOLLOWED = "Отписка"
-ANSWER_MUTED = "Без уведомлений"
-ANSWER_ALREADY_FAVOURITE = "Уже в избранном"
-ANSWER_ADDED = "Добавлено"
-ANSWER_FAILED = "Не получилось"
+@cache
+def texts_for(language: str = DEFAULT_LANGUAGE) -> Texts:
+    """The bot's texts in `language`, loaded once."""
+    return Texts(language)

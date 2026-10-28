@@ -130,14 +130,13 @@ def test_an_update_on_a_followed_story_is_alerted_once(store: StoryStore) -> Non
 
     [text] = sent_texts(store, MORNING)
 
+    # A card (F41): the title in bold, the status chip, what changed with a linked source.
     assert text == (
-        f"Новое в сюжете #{followed.id} «Сюжет 1» (слух)\n"
+        "🔔 <b>Сюжет 1</b>\n"
+        "🟡 слух\n"
         "\n"
-        "Синтетика: изменение 1.\n"
-        "Synthetic headline 1 (Example News)\n"
-        "https://example.com/story-1\n"
-        "\n"
-        f"Хронология: /story {followed.id}"
+        "• Синтетика: изменение 1. · "
+        '<a href="https://example.com/story-1">Example News</a>'
     )
     assert sent_texts(store, MORNING + timedelta(hours=1)) == []
 
@@ -208,7 +207,39 @@ def test_an_update_that_waited_too_long_is_skipped(store: StoryStore) -> None:
 def test_a_confirmed_story_shows_its_status(store: StoryStore) -> None:
     done = story(store, status=StoryStatus.CONFIRMED)
     store.add_update(done.id, update(1), MORNING - timedelta(hours=1))
-    assert sent_texts(store, MORNING)[0].startswith("Новое в сюжете #1 «Сюжет 1» (подтверждено)")
+    assert sent_texts(store, MORNING)[0].startswith("🔔 <b>Сюжет 1</b>\n🟢 подтверждено\n")
+
+
+def test_an_update_that_changed_the_status_says_so(store: StoryStore) -> None:
+    moved = story(store)
+    assert store.add_update(
+        moved.id, update(1), MORNING - timedelta(hours=1), status=StoryStatus.DEVELOPING
+    )
+    lines = sent_texts(store, MORNING)[0].splitlines()
+    assert lines[:2] == ["🔔 <b>Сюжет 1</b>", "🟠 развивается (статус изменился)"]
+
+
+def test_titles_headlines_and_links_are_escaped_for_telegram_html(store: StoryStore) -> None:
+    odd = store.create(
+        "odd",
+        "R&D <ставки>",
+        "Синтетика.",
+        StoryStatus.RUMOR,
+        [Entity(EntityKind.DRIVER, "bearman")],
+        update(100),
+        FOLLOWED - timedelta(days=1),
+        language="ru",
+    )
+    store.follow(odd.id, FOLLOWED)
+    store.add_update(
+        odd.id,
+        Update("H", "https://example.com/a?x=1&y=2", "A&B <News>", "1 < 2 & 3 > 2", MORNING, "ru"),
+        MORNING - timedelta(hours=1),
+    )
+    [text] = sent_texts(store, MORNING)
+    assert "<b>R&amp;D &lt;ставки&gt;</b>" in text
+    assert "• 1 &lt; 2 &amp; 3 &gt; 2 · " in text
+    assert '<a href="https://example.com/a?x=1&amp;y=2">A&amp;B &lt;News&gt;</a>' in text
 
 
 # --- quiet hours and the daily limit --------------------------------------------------------
@@ -253,10 +284,7 @@ def test_at_most_three_alerts_a_warsaw_day_the_rest_wait(store: StoryStore) -> N
     store.add_update(many[0].id, update(5), datetime(2026, 3, 29, 20, 0, tzinfo=UTC))
     monday = datetime(2026, 3, 30, 6, 0, tzinfo=UTC)
     texts = sent_texts(store, monday)
-    assert [t.splitlines()[0] for t in texts] == [
-        f"Новое в сюжете #{many[3].id} «Сюжет 4» (слух)",
-        f"Новое в сюжете #{many[0].id} «Сюжет 1» (слух)",
-    ]
+    assert [t.splitlines()[0] for t in texts] == ["🔔 <b>Сюжет 4</b>", "🔔 <b>Сюжет 1</b>"]
 
 
 # --- the message and its button -------------------------------------------------------------
@@ -268,7 +296,8 @@ def test_every_alert_carries_the_unfollow_button_the_bot_answers(store: StorySto
     [alert] = alerts.plan(store, MORNING).send
 
     [reply] = alerts.replies(alert)
-    [[button]] = reply.buttons
+    [[timeline, button]] = reply.buttons
+    assert (timeline.text, timeline.data) == ("Хронология", f"story:{followed.id}")
     assert (button.text, button.data) == ("Отписаться", f"unfollow:{followed.id}")
 
     handler = Bot(store, CHAT, DEFAULT_FAVOURITES, lambda teams, drivers: DEFAULT_FAVOURITES)
@@ -394,7 +423,7 @@ def test_alerts_dry_run_prints_and_records_nothing(
 ) -> None:
     assert main(["alerts", "--dry-run"]) == 0
     out, err = capsys.readouterr()
-    assert "Новое в сюжете #1 «Сюжет 1» (слух)" in out
+    assert "🔔 <b>Сюжет 1</b>\n🟡 слух" in out
     assert "[Отписаться]" in out
     assert "story alerts: 1 to send" in err
     assert "dry run: no alert sent, nothing recorded" in err
@@ -414,9 +443,15 @@ def test_alerts_sends_with_the_unfollow_button(
 
     [sent] = cli_dir.sent
     assert sent["chat_id"] == CHAT
-    assert sent["text"].startswith("Новое в сюжете #1")
+    assert sent["text"].startswith("🔔 <b>Сюжет 1</b>")
+    assert sent["parse_mode"] == "HTML"
     assert sent["reply_markup"] == {
-        "inline_keyboard": [[{"text": "Отписаться", "callback_data": "unfollow:1"}]]
+        "inline_keyboard": [
+            [
+                {"text": "Хронология", "callback_data": "story:1"},
+                {"text": "Отписаться", "callback_data": "unfollow:1"},
+            ]
+        ]
     }
 
 
@@ -455,5 +490,5 @@ def test_run_dry_run_prints_the_alerts(
 ) -> None:
     monkeypatch.setattr(cli, "_run_due", lambda *args: 0)
     assert main(["run", "--dry-run"]) == 0
-    assert "Новое в сюжете #1" in capsys.readouterr().out
+    assert "🔔 <b>Сюжет 1</b>" in capsys.readouterr().out
     assert cli_dir.sent == []

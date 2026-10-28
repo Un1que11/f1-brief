@@ -529,15 +529,16 @@ def test_the_bot_shows_the_next_race_in_the_accounts_zone(
             utc(2026, 10, 26, 12),
         )
     lines = reply.text.splitlines()  # type: ignore[union-attr]
-    assert lines[3] == "Расписание (время America/New_York):"
-    assert lines[4] == "Пт 30.10 14:30 — Практика 1"
-    assert lines[8] == "Вс 01.11 15:00 — Гонка"
+    # The F41 card: the schedule as an aligned <pre> table in the account's zone.
+    assert lines[3] == "Расписание, время America/New_York:"
+    assert lines[4] == "<pre>Пт 30.10 14:30  Практика 1"
+    assert lines[8] == "Вс 01.11 15:00  Гонка</pre>"
     assert "Дайджест к этому этапу придёт Ср 28.10 00:00 по времени America/New_York." in lines
 
 
 def test_warsaw_keeps_its_wording() -> None:
-    assert bot_texts.by_zone(schedule.WARSAW) == "по Варшаве"
-    assert bot_texts.zone_note(ZoneInfo("Europe/Warsaw")) == "время варшавское"
+    assert bot_texts.texts_for("ru").by_zone(schedule.WARSAW) == "по Варшаве"
+    assert bot_texts.texts_for("ru").zone_note(ZoneInfo("Europe/Warsaw")) == "время варшавское"
 
 
 # --- the CLI uses the owner's settings -----------------------------------------------------

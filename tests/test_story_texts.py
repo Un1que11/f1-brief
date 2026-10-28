@@ -29,6 +29,21 @@ from f1brief.stories import (
     Update,
 )
 
+# The smallest digest answer `digest` accepts since F41 (a card; an unknown item needs no source).
+DIGEST_ANSWER = json.dumps(
+    {
+        "title": "Grand Prix",
+        "sections": [
+            {
+                "id": "weather",
+                "heading": "Weather",
+                "items": [{"text": "No forecast yet.", "unknown": True}],
+            }
+        ],
+    }
+)
+
+
 NOW = datetime(2026, 10, 21, 8, tzinfo=UTC)
 FACTS_BLOCK = "<facts>\n"
 
@@ -466,7 +481,7 @@ def test_the_digest_command_generates_and_caches_the_missing_texts(
     def fake_generate(document: dict[str, Any], _model: object, language: str) -> str:
         assert language == "en"
         written.append(document)
-        return "Digest."
+        return DIGEST_ANSWER
 
     monkeypatch.setattr(digest, "generate", fake_generate)
 
@@ -487,7 +502,7 @@ def test_a_failed_translation_warns_and_uses_the_stored_texts(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], english: Path
 ) -> None:
     monkeypatch.setattr(story_texts, "default_model", lambda name=None: broken)
-    monkeypatch.setattr(digest, "generate", lambda document, model, language: "Digest.")
+    monkeypatch.setattr(digest, "generate", lambda document, model, language: DIGEST_ANSWER)
 
     assert main(["digest", "--state", str(english)]) == 0
     assert "warning: story 1: no en texts: claude exited with 1" in capsys.readouterr().err

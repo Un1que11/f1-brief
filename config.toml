@@ -5,7 +5,7 @@
 
 [digest]
 # Language of the digest, the off-season summary and the message after qualifying:
-# "ru", "en" or "pl". The bot's buttons and replies stay Russian for now.
+# "ru", "en" or "pl". The bot's buttons and replies, story alerts and the archive page use it too.
 language = "ru"
 # The send window opens at local midnight this many days before the local date of FP1.
 days_before_fp1 = 2

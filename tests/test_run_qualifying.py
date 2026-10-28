@@ -2,7 +2,7 @@
 Telegram, Jolpica and `claude -p` are all stubs; the calendar is the recorded 2026 one."""
 
 # The message is Russian: Cyrillic letters that look like Latin ones are intended here.
-# ruff: noqa: RUF001
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,24 @@ from f1brief.send_log import SendLog, Status
 
 AFTER_QUALI = datetime(2026, 10, 25, 7, 0, tzinfo=UTC)  # Sun morning in Austin's window
 DURING_FP = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
-MESSAGE = "1. Квалификация\nРассел — P6.\n\n2. Что это значит для гонки\nСтарт в первой пятёрке."
+MESSAGE = json.dumps(
+    {
+        "title": "Гран-при США",
+        "sections": [
+            {
+                "id": "qualifying",
+                "heading": "Квалификация",
+                "items": [{"text": "Рассел — **P6**.", "unknown": True}],
+            },
+            {
+                "id": "outlook",
+                "heading": "Что это значит для гонки",
+                "items": [{"text": "Старт в первой пятёрке.", "unknown": True}],
+            },
+        ],
+    },
+    ensure_ascii=False,
+)
 
 
 class Stubs:
@@ -88,7 +105,8 @@ def test_sends_once_after_qualifying(setup, capsys: pytest.CaptureFixture[str]) 
 
     assert main(["run"]) == 0
     assert len(recorder.requests) == 1
-    assert recorder.texts()[0].startswith("*1\\. Квалификация*")
+    assert recorder.texts()[0].startswith("⏱ <b>Гран-при США</b>\n")
+    assert "<b>⏱ Квалификация</b>\n• Рассел — <b>P6</b>." in recorder.texts()[0]
     saved = record()
     assert saved is not None and (saved.status, saved.messages) == (Status.SENT, 1)
     err = capsys.readouterr().err
@@ -262,7 +280,9 @@ def test_quali_passes_the_favourites_and_writes_the_text(setup, tmp_path: Path) 
 
     args = ["quali", "--driver", "bearman", "--driver", "ocon", "--team", "haas"]
     assert main([*args, "--output", str(output)]) == 0
-    assert output.read_text(encoding="utf-8") == MESSAGE + "\n"
+    card = json.loads(output.read_text(encoding="utf-8"))
+    assert (card["kind"], card["title"]) == ("quali", "Гран-при США")
+    assert [s["id"] for s in card["sections"]] == ["qualifying", "outlook"]
     assert stubs.collected == [(18, 22, ("bearman", "ocon"), ("haas",))]
     assert recorder.requests == []
     assert record() is None

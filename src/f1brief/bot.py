@@ -13,11 +13,14 @@ favourites screen removes one with a tap. The typed commands
 `/story <id>`, `/follow <id>`, `/unfollow <id>`, `/mute <id> <days>`, `/archive`, `/next` and
 `/favourites` keep working. Callback data and command names never depend on the UI language.
 
-Every text comes from `bot_texts`. Only updates from the configured chat are handled; an
+Every text comes from `bot_texts`, in the bot's language (F30: the global `[digest] language`
+until F34). Only updates from the configured chat are handled; an
 update from any other chat gets no answer and is logged to stderr once per chat, so a wrong
-`TELEGRAM_CHAT_ID` is visible. Replies are plain text (no parse mode), so story titles and
-summaries need no escaping. The token is part of every Bot API URL, so it is redacted from
-every error here.
+`TELEGRAM_CHAT_ID` is visible. Replies are Telegram HTML (F41, `telegram_html`): every text
+from `bot_texts`, story titles and summaries included, is escaped, and the story timeline and
+the next race are laid out as cards (a bold title, a status chip, the schedule as a `<pre>`
+block, a long timeline folded into an expandable quote). The token is part of every Bot API
+URL, so it is redacted from every error here.
 
 `/archive` also sends the archive as a static HTML page (F28, `archive_page`) as a file.
 
@@ -40,12 +43,13 @@ from typing import Any
 import httpx
 
 from f1brief import archive_page, send_window
-from f1brief import bot_texts as texts
+from f1brief import telegram_html as th
+from f1brief.bot_texts import ICON_STORY, Texts, texts_for
 from f1brief.config import ConfigError, Favourite, Favourites
+from f1brief.messages import DEFAULT_LANGUAGE
 from f1brief.schedule import WARSAW, Race, ScheduleError, next_race
 from f1brief.send_log import StateError
 from f1brief.stories import (
-    STATUS_RU,
     Entity,
     EntityKind,
     Story,
@@ -61,8 +65,10 @@ POLL_TIMEOUT_S = 50
 # Waits after a failed poll, doubling up to the maximum.
 RETRY_MIN_S = 5.0
 RETRY_MAX_S = 300.0
-# Telegram allows 4096 characters (UTF-16 code units) per message; leave room for emoji.
+# Telegram allows 4096 characters (UTF-16 code units) per message; leave some room.
 MAX_LENGTH = 4000
+# A timeline longer than this (rendered characters) is folded into an expandable quote.
+FOLD_CHARS = 600
 MAX_MUTE_DAYS = 365
 # The days the "Без уведомлений" button mutes a story for.
 MUTE_BUTTON_DAYS = 7
@@ -79,8 +85,9 @@ MAX_CALLBACK_DATA = 64
 # 404) or another listener or a webhook on the same bot (409).
 FATAL_STATUSES = frozenset({401, 404, 409})
 
-HELP = texts.HELP
-ARCHIVE_CAPTION = texts.ARCHIVE_CAPTION
+# The icons before a followed story in /stories (the same in every language).
+ICON_FOLLOWED = "🔔"
+ICON_MUTED = "🔕"
 
 # Callback data: "<action>:<story id>[:<days>]", "menu:<screen>", "unfav:<kind>:<id>".
 FOLLOW, UNFOLLOW, FAVOURITES = "follow", "unfollow", "favs"
@@ -126,7 +133,7 @@ Keyboard = tuple[tuple[Button, ...], ...]
 
 @dataclass(frozen=True)
 class Reply:
-    """A message to the chat, with inline buttons (rows of them)."""
+    """A message to the chat in Telegram HTML, with inline buttons (rows of them)."""
 
     text: str
     buttons: Keyboard = ()
@@ -204,17 +211,17 @@ def favourite_for(entity: Entity) -> Favourite | None:
     return Favourite(entity.ref, name)
 
 
-def status_line(entry: StoryUpdate) -> list[str]:
+def status_line(entry: StoryUpdate, texts: Texts) -> list[str]:
     """The status the update moved its story to, as a line of its own; none if it did not."""
-    return [texts.STATUS_CHANGE.format(status=STATUS_RU[entry.status])] if entry.status else []
+    return [texts.status_change.format(status=texts.status(entry.status))] if entry.status else []
 
 
-def _line(story: Story, numbered: bool = True, tz: tzinfo = WARSAW) -> str:
-    template = texts.STORY_LINE_NUMBERED if numbered else texts.STORY_LINE
+def _line(story: Story, texts: Texts, numbered: bool = True, tz: tzinfo = WARSAW) -> str:
+    template = texts.story_line_numbered if numbered else texts.story_line
     return template.format(
         id=story.id,
         title=story.title,
-        status=STATUS_RU[story.status],
+        status=texts.status(story.status),
         date=texts.date(story.last_update_at, tz),
     )
 
@@ -223,50 +230,46 @@ def _short(title: str, limit: int = BUTTON_TITLE) -> str:
     return title if len(title) <= limit else title[: limit - 1].rstrip() + "…"
 
 
-def chunks(text: str, limit: int = MAX_LENGTH) -> list[str]:
-    """`text` cut at line ends into pieces of at most `limit` characters."""
-    pieces: list[str] = []
-    current = ""
-    for line in text.split("\n"):
-        while len(line) > limit:
-            if current:
-                pieces.append(current)
-                current = ""
-            pieces.append(line[:limit])
-            line = line[limit:]
-        candidate = f"{current}\n{line}" if current else line
-        if current and len(candidate) > limit:
-            pieces.append(current)
-            current = line
-        else:
-            current = candidate
-    if current.strip():
-        pieces.append(current)
-    return pieces or [text[:limit]]
+def source_line(text: str, label: str, url: str) -> th.Line:
+    """`text`, then the source as a short linked label."""
+    spans = [th.Span(text)] if text else []
+    if label:
+        spans += [th.Span(" · " if text else ""), th.Span(label, href=url)]
+    return th.Line(tuple(spans) or (th.Span(""),))
 
 
-MENU_ROW = (Button(texts.MENU_BACK, f"{MENU}:{MAIN}"),)
-
-MAIN_MENU: Keyboard = (
-    (
-        Button(texts.MENU_STORIES, f"{MENU}:{STORIES}"),
-        Button(texts.MENU_ARCHIVE, f"{MENU}:{ARCHIVE}"),
-    ),
-    (Button(texts.MENU_NEXT, f"{MENU}:{NEXT}"),),
-    (
-        Button(texts.MENU_FAVOURITES, f"{MENU}:{FAVOURITES_SCREEN}"),
-        Button(texts.MENU_HELP, f"{MENU}:{HELP_SCREEN}"),
-    ),
-)
+def folded(lines: Sequence[th.Line], sep: str = "\n") -> bool:
+    """Whether lines this long go into an expandable quote."""
+    return sum(len(line.render()) for line in lines) + len(sep) * len(lines) > FOLD_CHARS
 
 
-def _replies(text: str, buttons: Keyboard = (), menu: bool = True) -> list[Action]:
-    """The text in as many messages as it needs; the buttons (and, with `menu`, the "← Меню"
-    row) go with the last one."""
+def menu_row(texts: Texts) -> tuple[Button, ...]:
+    return (Button(texts.menu_back, f"{MENU}:{MAIN}"),)
+
+
+def html_replies(
+    blocks: Sequence[th.Block], buttons: Keyboard = (), menu: tuple[Button, ...] | None = None
+) -> list[Reply]:
+    """The blocks in as many HTML messages as they need; the buttons (and the `menu` row,
+    when given) go with the last one."""
     if menu:
-        buttons = (*buttons, MENU_ROW)
-    parts = chunks(text)
+        buttons = (*buttons, menu)
+    parts = th.pack(blocks, MAX_LENGTH)
     return [Reply(p, buttons if i == len(parts) - 1 else ()) for i, p in enumerate(parts)]
+
+
+def main_menu(texts: Texts) -> Keyboard:
+    return (
+        (
+            Button(texts.menu_stories, f"{MENU}:{STORIES}"),
+            Button(texts.menu_archive, f"{MENU}:{ARCHIVE}"),
+        ),
+        (Button(texts.menu_next, f"{MENU}:{NEXT}"),),
+        (
+            Button(texts.menu_favourites, f"{MENU}:{FAVOURITES_SCREEN}"),
+            Button(texts.menu_help, f"{MENU}:{HELP_SCREEN}"),
+        ),
+    )
 
 
 AddFavourites = Callable[[Sequence[Favourite], Sequence[Favourite]], Favourites]
@@ -299,8 +302,24 @@ class Bot:
     digest_sent: DigestSent = _not_sent
     days_before: int = send_window.DEFAULT_DAYS_BEFORE
     tz: tzinfo = WARSAW
+    language: str = DEFAULT_LANGUAGE
     warn: Callable[[str], None] = _warn
     ignored_chats: set[str] = field(default_factory=set, repr=False)
+
+    @property
+    def texts(self) -> Texts:
+        return texts_for(self.language)
+
+    def _html(
+        self, blocks: Sequence[th.Block], buttons: Keyboard = (), menu: bool = True
+    ) -> list[Action]:
+        """The blocks in as many HTML messages as they need; the buttons (and, with `menu`,
+        the "back to the menu" row) go with the last one."""
+        return list(html_replies(blocks, buttons, menu_row(self.texts) if menu else None))
+
+    def _replies(self, text: str, buttons: Keyboard = (), menu: bool = True) -> list[Action]:
+        """Plain text (escaped for Telegram HTML) as replies, like `_html`."""
+        return self._html(th.paragraphs(text), buttons, menu)
 
     def handle(self, update: Mapping[str, Any], now: datetime) -> list[Action]:
         incoming = parse_update(update)
@@ -324,11 +343,11 @@ class Bot:
     def _command(self, command: Command, now: datetime) -> list[Action]:
         name, args = command.name, command.args
         if name in ("", "menu"):
-            return _replies(texts.MENU_PROMPT, MAIN_MENU, menu=False)
+            return self._replies(self.texts.menu_prompt, main_menu(self.texts), menu=False)
         if name == "start":
             return self._start(now)
         if name == "help":
-            return _replies(texts.HELP)
+            return self._replies(self.texts.help)
         if name == "stories":
             return self._stories(now)
         if name == "archive":
@@ -338,10 +357,12 @@ class Bot:
         if name in ("favourites", "favorites"):
             return self._favourites_screen()
         if name not in ("story", "follow", "unfollow", "mute"):
-            return _replies(f"{texts.UNKNOWN_COMMAND.format(name=name)}\n\n{texts.HELP}")
+            return self._replies(
+                f"{self.texts.unknown_command.format(name=name)}\n\n{self.texts.help}"
+            )
         story = self._story_arg(args, name)
         if isinstance(story, str):
-            return _replies(story)
+            return self._replies(story)
         if name == "story":
             return self._timeline(story, now)
         if name == "follow":
@@ -353,16 +374,16 @@ class Bot:
     def _story_arg(self, args: Sequence[str], command: str) -> Story | str:
         """The story the first argument names, or why there is none."""
         if not args:
-            return texts.STORY_NUMBER_MISSING.format(command=command)
+            return self.texts.story_number_missing.format(command=command)
         story_id = _number(args[0].removeprefix("#"))
         story = self.store.get(story_id) if story_id is not None else None
         if story is None:
-            return texts.STORY_UNKNOWN.format(arg=args[0])
+            return self.texts.story_unknown.format(arg=args[0])
         return story
 
     def _start(self, now: datetime) -> list[Action]:
-        text = texts.start(self.days_before, self._next_digest(now))
-        return _replies(text, MAIN_MENU, menu=False)
+        text = self.texts.start(self.days_before, self._next_digest(now))
+        return self._replies(text, main_menu(self.texts), menu=False)
 
     def _stories(self, now: datetime) -> list[Action]:
         followed = self.store.followed()
@@ -371,32 +392,33 @@ class Bot:
         recent = [s for s in self.store.stories(open_statuses) if s.id not in followed_ids]
         recent = recent[:RECENT_STORIES]
         if not followed and not recent:
-            return _replies(texts.NO_STORIES)
+            return self._replies(self.texts.no_stories)
         lines: list[str] = []
         buttons: list[tuple[Button, ...]] = []
         if followed:
-            lines.append(texts.FOLLOWING)
+            lines.append(self.texts.following)
             for story in followed:
                 subscription = self.store.subscription(story.id)
                 muted = bool(subscription and subscription.muted_until and subscription.muted(now))
-                icon = texts.ICON_MUTED if muted else texts.ICON_FOLLOWED
+                icon = ICON_MUTED if muted else ICON_FOLLOWED
                 note = ""
                 if muted and subscription and subscription.muted_until:
-                    until = texts.date(subscription.muted_until, self.tz)
-                    note = texts.MUTED_UNTIL.format(date=until)
-                lines.append(f"{icon} {_line(story, numbered=False, tz=self.tz)}{note}")
+                    note = self.texts.muted_until.format(
+                        date=self.texts.date(subscription.muted_until, self.tz)
+                    )
+                lines.append(f"{icon} {_line(story, self.texts, numbered=False, tz=self.tz)}{note}")
                 buttons.append((self._open_button(story, icon),))
         else:
-            lines.append(texts.FOLLOWING_NONE)
+            lines.append(self.texts.following_none)
         if recent:
             lines += [
                 "",
-                texts.RECENT,
-                *(f"• {_line(s, numbered=False, tz=self.tz)}" for s in recent),
+                self.texts.recent,
+                *(f"• {_line(s, self.texts, numbered=False, tz=self.tz)}" for s in recent),
             ]
             buttons += [(self._open_button(s),) for s in recent]
-        lines += ["", texts.STORIES_HINT]
-        return _replies("\n".join(lines), tuple(buttons[:MAX_STORY_BUTTONS]))
+        lines += ["", self.texts.stories_hint]
+        return self._replies("\n".join(lines), tuple(buttons[:MAX_STORY_BUTTONS]))
 
     @staticmethod
     def _open_button(story: Story, icon: str = "") -> Button:
@@ -406,70 +428,76 @@ class Bot:
     def _archive(self, now: datetime) -> list[Action]:
         every = self.store.stories()
         if not every:
-            return _replies(texts.ARCHIVE_EMPTY)
+            return self._replies(self.texts.archive_empty)
         followed = {s.id for s in self.store.followed()}
-        lines = [texts.ARCHIVE_TITLE.format(count=len(every))]
+        lines = [self.texts.archive_title.format(count=len(every))]
         lines += [
-            _line(s, tz=self.tz) + (texts.ARCHIVE_FOLLOWED if s.id in followed else "")
+            _line(s, self.texts, tz=self.tz)
+            + (self.texts.archive_followed if s.id in followed else "")
             for s in every
         ]
-        lines += ["", texts.ARCHIVE_HINT]
+        lines += ["", self.texts.archive_hint]
         page = Document(
             archive_page.filename(now),
-            archive_page.build(self.store, now).encode("utf-8"),
+            archive_page.build(self.store, now, self.language).encode("utf-8"),
             "text/html",
-            ARCHIVE_CAPTION,
+            self.texts.archive_caption,
         )
-        return [*_replies("\n".join(lines)), page]
+        return [*self._replies("\n".join(lines)), page]
 
     def _timeline(self, story: Story, now: datetime) -> list[Action]:
         following = self._following(story.id)
-        lines = [
-            texts.STORY_TITLE.format(id=story.id, title=story.title),
-            texts.STORY_STATUS.format(
-                status=STATUS_RU[story.status],
-                following=texts.STORY_FOLLOWED if following else texts.STORY_NOT_FOLLOWED,
+        texts = self.texts
+        title = texts.story_title.format(id=story.id, title=story.title)
+        head = [
+            th.Line((th.Span(f"{ICON_STORY} "), th.Span(title, bold=True))),
+            th.plain(
+                texts.story_status.format(
+                    status=texts.status_chip(story.status),
+                    following=texts.story_followed if following else texts.story_not_followed,
+                )
             ),
-            story.summary,
-            "",
-            texts.TIMELINE,
         ]
+        if story.summary:
+            head.append(th.plain(story.summary))
+        entries: list[th.Line] = []
         for entry in self.store.timeline(story.id):
             update = entry.update
             when = texts.date(update.published_at or entry.recorded_at, self.tz)
-            lines += [
-                "",
-                texts.TIMELINE_ENTRY.format(
-                    date=when, headline=update.headline, source=update.source
-                ),
-                update.what_changed,
-                *status_line(entry),
-                update.url,
-            ]
-        return _replies("\n".join(lines), self._story_buttons(story, following))
+            spans = [th.Span(f"{when} — "), th.Span(update.headline, bold=True), th.Span("\n")]
+            spans += source_line(update.what_changed, update.source, update.url).spans
+            spans += [th.Span(f"\n{line}") for line in status_line(entry, texts)]
+            entries.append(th.Line(tuple(spans)))
+        blocks = [th.Block(tuple(head))]
+        if entries:
+            heading = th.Line((th.Span(texts.timeline, bold=True),))
+            blocks.append(th.Block(tuple(entries), heading, folded(entries, "\n\n"), "\n\n"))
+        return self._html(blocks, self._story_buttons(story, following))
 
     def _follow(self, story: Story, now: datetime) -> list[Action]:
-        template = texts.FOLLOWED if self.store.follow(story.id, now) else texts.ALREADY_FOLLOWED
+        template = (
+            self.texts.followed if self.store.follow(story.id, now) else self.texts.already_followed
+        )
         text = template.format(id=story.id, title=story.title)
-        return _replies(text, self._story_buttons(story, following=True))
+        return self._replies(text, self._story_buttons(story, following=True))
 
     def _unfollow(self, story: Story, now: datetime) -> list[Action]:
         if self.store.unfollow(story.id, now):
-            text = texts.UNFOLLOWED.format(id=story.id, title=story.title)
+            text = self.texts.unfollowed.format(id=story.id, title=story.title)
         else:
-            text = texts.NOT_FOLLOWED.format(id=story.id)
-        return _replies(text, self._story_buttons(story, following=False))
+            text = self.texts.not_followed.format(id=story.id)
+        return self._replies(text, self._story_buttons(story, following=False))
 
     def _mute(self, story: Story, args: Sequence[str], now: datetime) -> list[Action]:
         days = _number(args[0]) if args else None
         if days is None or not 1 <= days <= MAX_MUTE_DAYS:
-            return _replies(texts.MUTE_DAYS.format(max=MAX_MUTE_DAYS, id=story.id))
+            return self._replies(self.texts.mute_days.format(max=MAX_MUTE_DAYS, id=story.id))
         until = now + timedelta(days=days)
         if not self.store.mute(story.id, until):
-            return _replies(texts.MUTE_NOT_FOLLOWED.format(id=story.id))
-        return _replies(
-            texts.MUTED.format(
-                id=story.id, title=story.title, until=texts.date_time(until, self.tz)
+            return self._replies(self.texts.mute_not_followed.format(id=story.id))
+        return self._replies(
+            self.texts.muted.format(
+                id=story.id, title=story.title, until=self.texts.date_time(until, self.tz)
             ),
             self._story_buttons(story, following=True),
         )
@@ -491,29 +519,29 @@ class Bot:
         whose digest has not gone out yet."""
         races = self._races()
         if races is None:
-            return texts.CALENDAR_UNAVAILABLE
+            return self.texts.calendar_unavailable
         try:
             for race in races:
                 w = send_window.window(race, self.days_before, self.tz)
                 if now >= w.closes or self.digest_sent(race) is not None:
                     continue
                 if now >= w.opens:
-                    return texts.NEXT_DIGEST_SOON.format(race=race.name)
-                return texts.NEXT_DIGEST_AT.format(
-                    race=race.name, when=texts.day_time(w.opens, self.tz), zone=self.zone
+                    return self.texts.next_digest_soon.format(race=race.name)
+                return self.texts.next_digest_at.format(
+                    race=race.name, when=self.texts.day_time(w.opens, self.tz), zone=self.zone
                 )
         except StateError as exc:
             self.warn(f"send log: {exc}")
-            return texts.CALENDAR_UNAVAILABLE
-        return texts.NO_DIGEST_PLANNED
+            return self.texts.calendar_unavailable
+        return self.texts.no_digest_planned
 
     def _next(self, now: datetime) -> list[Action]:
         races = self._races()
         if races is None:
-            return _replies(texts.CALENDAR_UNAVAILABLE)
+            return self._replies(self.texts.calendar_unavailable)
         race = next_race(races, now)
         if race is None:
-            return _replies(texts.NO_RACES)
+            return self._replies(self.texts.no_races)
         w = send_window.window(race, self.days_before, self.tz)
         try:
             sent = self.digest_sent(race)
@@ -521,48 +549,53 @@ class Bot:
             self.warn(f"send log: {exc}")
             sent = None
         if sent is not None:
-            digest = texts.DIGEST_SENT.format(when=texts.date_time(sent, self.tz))
+            digest = self.texts.digest_sent.format(when=self.texts.date_time(sent, self.tz))
         elif now < w.opens:
-            digest = texts.DIGEST_AT.format(when=texts.day_time(w.opens, self.tz), zone=self.zone)
+            digest = self.texts.digest_at.format(
+                when=self.texts.day_time(w.opens, self.tz), zone=self.zone
+            )
         elif now < w.closes:
-            digest = texts.DIGEST_SOON
+            digest = self.texts.digest_soon
         else:
-            digest = texts.DIGEST_NOT_SENT
-        return _replies(texts.next_race(race, digest, self.tz))
+            digest = self.texts.digest_not_sent
+        return self._html(self.texts.next_race(race, digest, self.tz))
 
     @property
     def zone(self) -> str:
-        return texts.by_zone(self.tz)
+        return self.texts.by_zone(self.tz)
 
     # --- favourites ----------------------------------------------------------------------
 
     def _favourites_screen(self, notice: str = "") -> list[Action]:
         teams, drivers = self.favourites.teams, self.favourites.drivers
-        text = texts.favourites([t.name for t in teams], [d.name for d in drivers])
+        text = self.texts.favourites([t.name for t in teams], [d.name for d in drivers])
         rows: list[tuple[Button, ...]] = []
         if self.remove_favourite is not None:
             for kind, entries in (("teams", teams), ("drivers", drivers)):
                 for fav in entries:
                     data = f"{UNFAVOURITE}:{kind}:{fav.id}"
                     if len(data.encode("utf-8")) <= MAX_CALLBACK_DATA:
-                        rows.append((Button(texts.REMOVE_BUTTON.format(name=fav.name), data),))
-        return _replies(f"{notice}\n\n{text}" if notice else text, tuple(rows))
+                        rows.append((Button(self.texts.remove_button.format(name=fav.name), data),))
+        return self._replies(f"{notice}\n\n{text}" if notice else text, tuple(rows))
 
     def _unfavourite(self, press: Press, kind: str, fav_id: str) -> list[Action]:
         entries = getattr(self.favourites, kind)
         current = next((f for f in entries if f.id == fav_id), None)
         if current is None or self.remove_favourite is None:
-            notice = texts.ALREADY_REMOVED.format(name=fav_id)
+            notice = self.texts.already_removed.format(name=fav_id)
             return [Answer(press.callback_id), *self._favourites_screen(notice)]
         try:
             self.favourites = self.remove_favourite(kind, fav_id)
         except ConfigError as exc:
             return [
-                Answer(press.callback_id, texts.ANSWER_FAILED),
-                *_replies(texts.NOT_REMOVED.format(error=exc)),
+                Answer(press.callback_id, self.texts.answer_failed),
+                *self._replies(self.texts.not_removed.format(error=exc)),
             ]
-        notice = texts.REMOVED.format(name=current.name)
-        return [Answer(press.callback_id, texts.ANSWER_REMOVED), *self._favourites_screen(notice)]
+        notice = self.texts.removed.format(name=current.name)
+        return [
+            Answer(press.callback_id, self.texts.answer_removed),
+            *self._favourites_screen(notice),
+        ]
 
     # --- buttons -------------------------------------------------------------------------
 
@@ -574,25 +607,34 @@ class Bot:
             kind, _, fav_id = rest.partition(":")
             if kind in ("teams", "drivers") and fav_id:
                 return self._unfavourite(press, kind, fav_id)
-            return [Answer(press.callback_id, texts.ANSWER_GONE)]
+            return [Answer(press.callback_id, self.texts.answer_gone)]
         raw_id, _, arg = rest.partition(":")
         story_id = _number(raw_id)
         story = self.store.get(story_id) if story_id is not None else None
         if story is None or action not in (FOLLOW, UNFOLLOW, FAVOURITES, STORY, MUTE):
-            return [Answer(press.callback_id, texts.ANSWER_GONE)]
+            return [Answer(press.callback_id, self.texts.answer_gone)]
         if action == STORY:
             return [Answer(press.callback_id), *self._timeline(story, now)]
         if action == FOLLOW:
-            return [Answer(press.callback_id, texts.ANSWER_FOLLOWED), *self._follow(story, now)]
+            return [
+                Answer(press.callback_id, self.texts.answer_followed),
+                *self._follow(story, now),
+            ]
         if action == UNFOLLOW:
-            return [Answer(press.callback_id, texts.ANSWER_UNFOLLOWED), *self._unfollow(story, now)]
+            return [
+                Answer(press.callback_id, self.texts.answer_unfollowed),
+                *self._unfollow(story, now),
+            ]
         if action == MUTE:
-            return [Answer(press.callback_id, texts.ANSWER_MUTED), *self._mute(story, [arg], now)]
+            return [
+                Answer(press.callback_id, self.texts.answer_muted),
+                *self._mute(story, [arg], now),
+            ]
         return self._add_favourites(press, story)
 
     def _menu(self, press: Press, screen: str, now: datetime) -> list[Action]:
         if screen == MAIN:
-            actions = _replies(texts.MENU_PROMPT, MAIN_MENU, menu=False)
+            actions = self._replies(self.texts.menu_prompt, main_menu(self.texts), menu=False)
         elif screen == STORIES:
             actions = self._stories(now)
         elif screen == ARCHIVE:
@@ -602,29 +644,29 @@ class Bot:
         elif screen == FAVOURITES_SCREEN:
             actions = self._favourites_screen()
         elif screen == HELP_SCREEN:
-            actions = _replies(texts.HELP)
+            actions = self._replies(self.texts.help)
         else:
-            return [Answer(press.callback_id, texts.ANSWER_GONE)]
+            return [Answer(press.callback_id, self.texts.answer_gone)]
         return [Answer(press.callback_id), *actions]
 
     def _add_favourites(self, press: Press, story: Story) -> list[Action]:
         candidates = self.candidates(story)
         if not candidates:
-            return [Answer(press.callback_id, texts.ANSWER_ALREADY_FAVOURITE)]
+            return [Answer(press.callback_id, self.texts.answer_already_favourite)]
         teams = [f for e, f in candidates if e.kind == EntityKind.TEAM]
         drivers = [f for e, f in candidates if e.kind == EntityKind.DRIVER]
         try:
             self.favourites = self.add_favourites(teams, drivers)
         except ConfigError as exc:
             return [
-                Answer(press.callback_id, texts.ANSWER_FAILED),
-                *_replies(texts.NOT_ADDED.format(error=exc)),
+                Answer(press.callback_id, self.texts.answer_failed),
+                *self._replies(self.texts.not_added.format(error=exc)),
             ]
         names = ", ".join(f.name for _, f in candidates)
         return [
-            Answer(press.callback_id, texts.ANSWER_ADDED),
-            *_replies(
-                texts.ADDED.format(names=names),
+            Answer(press.callback_id, self.texts.answer_added),
+            *self._replies(
+                self.texts.added.format(names=names),
                 self._story_buttons(story, self._following(story.id)),
             ),
         ]
@@ -649,14 +691,19 @@ class Bot:
 
     def _story_buttons(self, story: Story, following: bool) -> Keyboard:
         if not following:
-            return ((Button(texts.BUTTON_FOLLOW, f"{FOLLOW}:{story.id}"),),)
+            return ((Button(self.texts.button_follow, f"{FOLLOW}:{story.id}"),),)
         rows: list[tuple[Button, ...]] = [
-            (Button(texts.BUTTON_UNFOLLOW, f"{UNFOLLOW}:{story.id}"),),
-            (Button(texts.button_mute(MUTE_BUTTON_DAYS), f"{MUTE}:{story.id}:{MUTE_BUTTON_DAYS}"),),
+            (Button(self.texts.button_unfollow, f"{UNFOLLOW}:{story.id}"),),
+            (
+                Button(
+                    self.texts.button_mute(MUTE_BUTTON_DAYS),
+                    f"{MUTE}:{story.id}:{MUTE_BUTTON_DAYS}",
+                ),
+            ),
         ]
         candidates = self.candidates(story)
         if candidates:
-            label = texts.BUTTON_FOLLOW_ENTITIES.format(
+            label = self.texts.button_follow_entities.format(
                 names=", ".join(f.name for _, f in candidates)
             )
             rows.append((Button(label, f"{FAVOURITES}:{story.id}"),))
@@ -747,6 +794,7 @@ class BotApi:
         payload: dict[str, Any] = {
             "chat_id": self.credentials.chat_id,
             "text": action.text,
+            "parse_mode": th.PARSE_MODE,
             "link_preview_options": {"is_disabled": True},
         }
         if action.buttons:
@@ -812,11 +860,14 @@ class OffsetStore:
             raise StateError(f"{self.path}: {exc}") from exc
 
 
-def register_commands(api: BotApi, warn: Callable[[str], None] = _warn) -> bool:
-    """Registers the command menu (`setMyCommands`) when the listener starts. A failure is
-    reported and does not stop the listener: the commands still work when typed."""
+def register_commands(
+    api: BotApi, warn: Callable[[str], None] = _warn, language: str = DEFAULT_LANGUAGE
+) -> bool:
+    """Registers the command menu (`setMyCommands`), described in `language`, when the
+    listener starts. A failure is reported and does not stop the listener: the commands still
+    work when typed."""
     try:
-        api.set_commands(texts.COMMANDS)
+        api.set_commands(texts_for(language).commands())
     except BotError as exc:
         warn(f"command menu not registered: {exc}")
         return False

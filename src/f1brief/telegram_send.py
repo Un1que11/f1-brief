@@ -1,4 +1,4 @@
-"""Sending the digest messages (F14) to a Telegram chat through the Bot API.
+"""Sending the digest messages (F41: Telegram HTML) to a Telegram chat through the Bot API.
 
 Docs: https://core.telegram.org/bots/api#sendmessage. The bot token and the chat id come from
 the environment (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`), or from a `.env` file that is never
@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from f1brief.telegram_html import PARSE_MODE
 
 API_URL = "https://api.telegram.org"
 TOKEN_VAR = "TELEGRAM_BOT_TOKEN"
@@ -124,7 +126,8 @@ def _describe(response: httpx.Response) -> tuple[str, int | None]:
 
 @dataclass
 class Sender:
-    """Sends MarkdownV2 messages to one chat, in order, stopping at the first failure."""
+    """Sends HTML messages (`telegram_html`) to one chat, in order, stopping at the first
+    failure."""
 
     credentials: Credentials
     client: httpx.Client
@@ -138,7 +141,7 @@ class Sender:
         payload = {
             "chat_id": self.credentials.chat_id,
             "text": text,
-            "parse_mode": "MarkdownV2",
+            "parse_mode": PARSE_MODE,
             # News links would each pull in a preview card; the digest reads better without.
             "link_preview_options": {"is_disabled": True},
         }

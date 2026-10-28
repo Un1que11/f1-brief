@@ -1,0 +1,191 @@
+# English texts of the bot, the story alerts, the offer to unfollow a quiet story and the
+# archive page (F30). Same keys and {fields} as ru.toml (checked by tests/test_messages.py).
+
+# --- formats -------------------------------------------------------------------------------
+[format]
+date = "{day} {month_name} {year}"
+date_time = "{day} {month_name} {year} {hour:02d}:{minute:02d}"
+day_time = "{weekday} {day} {month_name} {hour:02d}:{minute:02d}"
+day = "{weekday} {day} {month_name}"
+decimal_separator = "."
+group_separator = ","
+weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+# Plural forms by CLDR category (en: one, other); {n} is the number.
+[plural.days]
+one = "{n} day"
+other = "{n} days"
+
+[status]
+rumor = "rumour"
+developing = "developing"
+confirmed = "confirmed"
+denied = "denied"
+resolved = "resolved"
+
+[sessions]
+fp1 = "Practice 1"
+fp2 = "Practice 2"
+fp3 = "Practice 3"
+sprint_qualifying = "Sprint qualifying"
+sprint = "Sprint"
+qualifying = "Qualifying"
+race = "Race"
+
+[entity_kinds]
+driver = "driver"
+team = "team"
+person = "person"
+
+[commands]
+start = "What the bot does, and the menu"
+stories = "Stories: yours and recent ones"
+archive = "All stories, including finished ones"
+next = "The next race and its digest"
+favourites = "Favourite teams and drivers"
+help = "All commands"
+
+# --- the bot: menu, /start, /help -----------------------------------------------------------
+[text]
+menu_stories = "📰 Stories"
+menu_archive = "🗂 Archive"
+menu_next = "🏁 Next race"
+menu_favourites = "⭐ Favourites"
+menu_help = "❓ Help"
+menu_back = "← Menu"
+menu_prompt = "I understand buttons and commands. What shall I show?"
+
+start_same_day = "on the day of the first practice"
+start_days_before = "{days} before the first practice"
+greeting = """
+Hi! I send an F1 digest {when}: what has changed since the last race, how your teams and drivers are doing and what to expect this weekend.
+After qualifying, a short message on how it went for your favourites.
+News on the stories you follow (contracts, moves, rumours) comes right away, and at night (23:00–08:00) in the morning.
+{next_digest}"""
+
+help = """
+Commands:
+/start — what the bot does, and the menu
+/stories — the stories you follow, and recent ones
+/story <number> — a story's timeline with sources
+/follow <number> — follow a story
+/unfollow <number> — unfollow (the story stays in the archive)
+/mute <number> <days> — no notifications for N days
+/archive — all stories, including finished ones
+/next — the next race and when the digest comes
+/favourites — favourite teams and drivers
+
+All of this is on the buttons too: /start."""
+
+unknown_command = "I don't know the command /{name}."
+
+# --- the next race and the digest -----------------------------------------------------------
+calendar_unavailable = "The calendar is not available right now, try again later."
+no_races = "There are no more races in this season's calendar."
+no_digest_planned = "The next digest comes once a new race is in the calendar."
+next_digest_at = "The next digest comes {when} {zone}, for the «{race}» round."
+next_digest_soon = "The digest for the «{race}» round comes within the hour."
+digest_sent = "The digest for this round was sent {when}."
+digest_at = "The digest for this round comes {when} {zone}."
+digest_soon = "The digest for this round comes within the hour."
+digest_not_sent = "No digest was sent for this round."
+race_title = "Round {round}: {name} ({season})"
+race_schedule = "Schedule, {zone}:"
+zone_by_warsaw = "Warsaw time"
+zone_by_other = "{tz} time"
+zone_note_warsaw = "Warsaw time"
+zone_note_other = "{tz} time"
+race_session = "{when} — {session}"
+race_session_unknown_time = "{day}, time to be confirmed"
+race_time_tbc = "{no_time} — time to be confirmed"
+race_source = "Source: {source}."
+
+# --- favourites -----------------------------------------------------------------------------
+favourites_title = "⭐ Favourites — the digest is built around them."
+favourite_teams = "Teams: {names}"
+favourite_drivers = "Drivers: {names}"
+none = "none"
+favourites_hint = "Remove one with a button below. Add from a story: after «Follow» a «Follow …» button appears."
+remove_button = "✕ {name}"
+removed = "Removed from favourites: {name}. Add it back with a story's button."
+already_removed = "{name} is not in favourites any more."
+not_removed = "Could not remove from favourites: {error}"
+answer_removed = "Removed"
+
+# --- stories --------------------------------------------------------------------------------
+no_stories = "No stories yet. All stories: /archive"
+following = "You follow:"
+following_none = "You don't follow any story yet."
+recent = "Recent stories:"
+muted_until = " (no notifications until {date})"
+stories_hint = "Tap a story to open its timeline."
+story_line = "{title} — {status}, {date}"
+story_line_numbered = "#{id} {title} — {status}, {date}"
+
+archive_empty = "The archive is empty: no stories yet."
+archive_title = "All stories ({count}):"
+archive_followed = " — following"
+archive_hint = "More: /story <number>"
+archive_caption = "The archive as a page: open the file in a browser. Filters: following / all / finished; every update links to its source."
+
+story_title = "#{id} {title}"
+story_status = "Status: {status} · {following}"
+story_followed = "you follow it"
+story_not_followed = "not following"
+timeline = "Timeline:"
+timeline_entry = "{date} — {headline} ({source})"
+status_change = "Status → {status}"
+
+story_number_missing = "Give the story's number, e.g. /{command} 3"
+story_unknown = "There is no story {arg}. All stories: /archive"
+
+followed = "You now follow story #{id} «{title}»."
+already_followed = "You already follow story #{id} «{title}»."
+unfollowed = "You no longer follow story #{id} «{title}». It stays in the archive: /story {id}"
+not_followed = "You don't follow story #{id}."
+mute_days = "Give a number of days from 1 to {max}, e.g. /mute {id} 7"
+mute_not_followed = "You don't follow story #{id}. First: /follow {id}"
+muted = "Story #{id} «{title}»: no notifications until {until}."
+
+button_follow = "Follow"
+button_unfollow = "Unfollow"
+button_timeline = "Timeline"
+button_follow_entities = "Follow {names}"
+button_mute_days = "No notifications for {days}"
+
+added = "Added to favourites: {names}. They will be in the next digest."
+not_added = "Could not add to favourites: {error}"
+
+answer_gone = "This button is gone"
+answer_followed = "Following"
+answer_unfollowed = "Unfollowed"
+answer_muted = "Muted"
+answer_already_favourite = "Already a favourite"
+answer_added = "Added"
+answer_failed = "That didn't work"
+
+# --- story alerts and the offer to unfollow a quiet story -----------------------------------
+alert_title = "New in story #{id} «{title}» ({status})"
+timeline_link = "Timeline: /story {id}"
+alert_status_changed = "{chip} (status changed)"
+stale_offer = """
+Story #{id} «{title}» ({status}): no news for {days}, last update {date}.
+Unfollow? To keep following, don't press anything: its news will come as usual."""
+
+# --- the archive page -----------------------------------------------------------------------
+page_title = "F1 Brief — story archive"
+page_heading = "Story archive"
+page_generated = "Generated {when} (Warsaw) · stories: {count}"
+page_footer = "Every update links to its source article. Rumours are marked with the status «{rumor}»."
+page_following = "following"
+page_muted_until = "no notifications until {date}"
+page_updated = "updated {date}"
+page_who = "Who: {entities}"
+page_timeline = "Timeline ({count})"
+page_filter_followed = "Following"
+page_filter_all = "All"
+page_filter_resolved = "Finished"
+page_empty_followed = "You don't follow any story yet."
+page_empty_all = "No stories yet."
+page_empty_resolved = "No finished stories."

@@ -14,7 +14,8 @@ import httpx
 import pytest
 from conftest import FIXTURES
 
-from f1brief import bot, config, users
+from f1brief import bot, bot_texts, config, users
+from f1brief import telegram_html as th
 from f1brief import telegram_send as ts
 from f1brief.bot import Answer, Bot, Button, Reply
 from f1brief.cli import main
@@ -23,6 +24,7 @@ from f1brief.send_log import StateError
 from f1brief.stories import Entity, EntityKind, StoryStatus, StoryStore, Update
 
 NOW = datetime(2026, 10, 19, 9, tzinfo=UTC)
+RU_MENU = bot.main_menu(bot_texts.texts_for("ru"))
 CHAT = "424242"
 OTHER_CHAT = "515151"
 TOKEN = "123456:TEST-token_abcDEF"
@@ -179,7 +181,7 @@ def test_updates_from_another_chat_get_no_answer_and_change_nothing(
 def test_plain_text_gets_the_main_menu(handler: Bot) -> None:
     for text in ("привет", "/menu"):
         [reply] = handler.handle(message(text), NOW)
-        assert reply == Reply("Я понимаю кнопки и команды. Что показать?", bot.MAIN_MENU)
+        assert reply == Reply("Я понимаю кнопки и команды. Что показать?", RU_MENU)
 
 
 def test_help_lists_the_commands_with_a_menu_button(handler: Bot) -> None:
@@ -192,7 +194,7 @@ def test_help_lists_the_commands_with_a_menu_button(handler: Bot) -> None:
 def test_an_unknown_command_is_named_with_the_help(handler: Bot) -> None:
     text = text_of(handler.handle(message("/subscribe 1"), NOW))
     assert "Не знаю команду /subscribe" in text
-    assert "/follow <номер>" in text
+    assert "/follow &lt;номер&gt;" in text  # escaped for Telegram HTML
 
 
 # --- commands -------------------------------------------------------------------------------
@@ -243,14 +245,18 @@ def test_story_shows_the_timeline_with_sources(store: StoryStore, handler: Bot) 
     actions = handler.handle(message(f"/story {story.id}"), NOW)
 
     text = text_of(actions)
-    assert text.startswith(f"#{story.id} Бирман в Ferrari в 2028?\nСтатус: слух · не следишь\n")
+    assert text.startswith(
+        f"📰 <b>#{story.id} Бирман в Ferrari в 2028?</b>\nСтатус: 🟡 слух · не следишь\n"
+        "Синтетика: краткое описание.\n\n<b>Хронология:</b>\n"
+    )
     assert (
-        "30.09.2026 — Synthetic headline 1 (Example News)\n"
-        "Синтетика: изменение 1.\nСтатус → слух\nhttps://example.com/story-1"
+        "30.09.2026 — <b>Synthetic headline 1</b>\n"
+        "Синтетика: изменение 1. · "
+        '<a href="https://example.com/story-1">Example News</a>\nСтатус → слух'
     ) in text
-    assert "12.10.2026 — Synthetic headline 2 (Example News)" in text
+    assert "12.10.2026 — <b>Synthetic headline 2</b>" in text
     # An undated article is dated by when it was recorded.
-    assert "19.10.2026 — Synthetic headline 3 (Example News)" in text
+    assert "19.10.2026 — <b>Synthetic headline 3</b>" in text
     assert text.index("story-1") < text.index("story-2") < text.index("story-3")
     assert buttons_of(actions) == [Button("Следить", f"follow:{story.id}"), BACK]
 
@@ -382,7 +388,7 @@ def test_archive_sends_the_page_after_the_list(store: StoryStore, handler: Bot) 
     page = actions[-1]
     assert page.filename == "f1-archive-2026-10-19.html"
     assert page.mime_type == "text/html"
-    assert page.caption == bot.ARCHIVE_CAPTION
+    assert page.caption == bot_texts.texts_for("ru").archive_caption
     html = page.content.decode("utf-8")
     assert '<article class="story followed" id="story-1">' in html
     assert "https://example.com/story-1" in html
@@ -529,14 +535,22 @@ def test_names_are_escaped_for_toml(tmp_path: Path) -> None:
 
 
 def test_long_texts_are_split_at_line_ends() -> None:
-    text = "\n".join(f"строка {i:04d} " + "x" * 40 for i in range(300))
-    parts = bot.chunks(text, limit=1000)
-    assert all(len(p) <= 1000 for p in parts)
-    assert "\n".join(parts) == text
+    lines = [f"строка {i:04d} <&> " + "x" * 40 for i in range(300)]
+    parts = [r.text for r in bot.html_replies(th.paragraphs("\n".join(lines)), menu=False)]
+    assert len(parts) > 1
+    assert all(len(p) <= bot.MAX_LENGTH for p in parts)
+    assert "\n".join(parts) == "\n".join(th.escape(line) for line in lines)
 
 
-def test_a_line_longer_than_the_limit_is_cut() -> None:
-    assert bot.chunks("a" * 25, limit=10) == ["a" * 10, "a" * 10, "a" * 5]
+def test_a_long_timeline_is_folded_into_an_expandable_quote(
+    store: StoryStore, handler: Bot
+) -> None:
+    story = seed(store)
+    for n in range(2, 12):
+        store.add_update(story.id, update(n, datetime(2026, 10, n, 8, tzinfo=UTC)), NOW)
+    text = text_of(handler.handle(message(f"/story {story.id}"), NOW))
+    assert "<b>Хронология:</b>\n<blockquote expandable>30.09.2026" in text
+    assert text.endswith("</blockquote>")
 
 
 def test_a_long_archive_keeps_the_buttons_on_the_last_message(
@@ -605,7 +619,7 @@ def test_replies_carry_the_inline_keyboard(store: StoryStore, handler: Bot) -> N
 
     [sent] = mock.sent("sendMessage")
     assert sent["chat_id"] == CHAT
-    assert "parse_mode" not in sent
+    assert sent["parse_mode"] == "HTML"
     assert sent["reply_markup"] == {
         "inline_keyboard": [
             [{"text": "Отписаться", "callback_data": f"unfollow:{story.id}"}],
@@ -627,7 +641,7 @@ def test_the_archive_page_goes_as_a_document(store: StoryStore, handler: Bot) ->
     [sent] = mock.sent("sendDocument")
     body = sent["multipart"]
     assert b'name="chat_id"\r\n\r\n424242\r\n' in body
-    assert bot.ARCHIVE_CAPTION.encode("utf-8") in body
+    assert bot_texts.texts_for("ru").archive_caption.encode("utf-8") in body
     assert b'name="document"; filename="f1-archive-2026-10-19.html"' in body
     assert b"Content-Type: text/html" in body
     assert b"<!doctype html>" in body
@@ -859,7 +873,7 @@ def test_dry_run_answers_the_saved_updates_and_keeps_nothing(
     assert "[button answer] Следишь" in out  # follow:1
     assert "[Отписаться]\n[Без уведомлений на 7 дней]\n[Следить за Ferrari, Hamilton]" in out
     assert "Добавил в избранное: Ferrari, Hamilton." in out  # favs:1
-    assert "Статус: слух · ты следишь" in out  # /story@test_bot 1
+    assert "Статус: 🟡 слух · ты следишь" in out  # /story@test_bot 1
     assert "Ты больше не следишь" not in out  # /unfollow from another chat: ignored
     assert "would add Ferrari, Hamilton" in err
     assert err.count("ignored chat 515151") == 1  # the stranger's /unfollow
@@ -933,7 +947,9 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setenv(ts.TOKEN_VAR, TOKEN)
     monkeypatch.setenv(ts.CHAT_ID_VAR, CHAT)
     seen: dict[str, Any] = {}
-    monkeypatch.setattr(bot, "register_commands", lambda telegram: seen.setdefault("menu", True))
+    monkeypatch.setattr(
+        bot, "register_commands", lambda telegram, **kw: seen.setdefault("menu", True)
+    )
 
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         seen["offsets"] = offsets.load()
@@ -974,7 +990,7 @@ def test_a_fatal_poll_error_ends_the_command(
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         raise bot.BotError("getUpdates: Conflict: terminated by other getUpdates request", 409)
 
-    monkeypatch.setattr(bot, "register_commands", lambda telegram: True)
+    monkeypatch.setattr(bot, "register_commands", lambda telegram, **kw: True)
 
     monkeypatch.setattr(bot, "listen", fake_listen)
     assert main(["bot"]) == 1
