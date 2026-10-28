@@ -61,8 +61,11 @@ file) apply; a file with a typo or a bad value is an error, not ignored. Use ano
 `digest.language` is the language of the digest, the off-season summary and the message after
 qualifying: `ru` (the default), `en` or `pl`. Each language has its own prompt templates in
 `src/f1brief/prompts/<language>/`; they are word for word the same apart from the output
-language, and a test fails if their rules or sections drift apart. The bot's buttons and replies
-stay Russian for now. A favourite may give its name form per language, e.g.
+language, and a test fails if their rules or sections drift apart. The bot's buttons and
+replies, the story alerts and the archive page use the same language (F30): their texts live in
+`src/f1brief/messages/<language>.toml`, one file per language with the same keys (a test checks
+it), with dates, 24-hour times, numbers (decimal comma for `ru` / `pl`) and plurals per language.
+A favourite may give its name form per language, e.g.
 `names = { ru = "Джордж Расселл" }`: the digest then always uses that form in that language
 (otherwise the model picks one, which can differ between digests). News matching still uses
 `name` and `aliases`.
@@ -227,7 +230,8 @@ read it from `--state`.
 (meant for its own launchd job with `KeepAlive`). It answers only the chat in
 `TELEGRAM_CHAT_ID`; an update from any other chat gets no answer and is logged to stderr once
 per chat (`ignored chat <id>; TELEGRAM_CHAT_ID is <id>`), so a wrong chat id shows up in
-`bot.err.log`. Russian UI, buttons everywhere:
+`bot.err.log`. UI in `digest.language`, buttons everywhere (the labels below are the Russian
+ones):
 
 - `/start` says in a few lines what the bot sends and when the next digest comes (Warsaw
   time), then shows the main menu: «📰 Сюжеты», «🗂 Архив», «🏁 Следующая гонка», «⭐ Избранное»,
@@ -246,7 +250,7 @@ per chat (`ignored chat <id>; TELEGRAM_CHAT_ID is <id>`), so a wrong chat id sho
   `/mute <id> <days>`, `/archive` (all, resolved included), `/help`.
 
 On start the listener registers its commands with `setMyCommands`, so they appear under the
-"/" button in Telegram. Every text lives in `src/f1brief/bot_texts.py`. Only one listener per
+"/" button in Telegram. Every text lives in the message catalog `src/f1brief/messages/`. Only one listener per
 bot can poll: a second one, or a webhook on the bot, stops it with an error.
 
 ```bash

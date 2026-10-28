@@ -14,7 +14,7 @@ import httpx
 import pytest
 from conftest import FIXTURES
 
-from f1brief import bot, config
+from f1brief import bot, bot_texts, config
 from f1brief import telegram_send as ts
 from f1brief.bot import Answer, Bot, Button, Reply
 from f1brief.cli import main
@@ -23,6 +23,7 @@ from f1brief.send_log import StateError
 from f1brief.stories import Entity, EntityKind, StoryStatus, StoryStore, Update
 
 NOW = datetime(2026, 10, 19, 9, tzinfo=UTC)
+RU_MENU = bot.main_menu(bot_texts.texts_for("ru"))
 CHAT = "424242"
 OTHER_CHAT = "515151"
 TOKEN = "123456:TEST-token_abcDEF"
@@ -179,7 +180,7 @@ def test_updates_from_another_chat_get_no_answer_and_change_nothing(
 def test_plain_text_gets_the_main_menu(handler: Bot) -> None:
     for text in ("привет", "/menu"):
         [reply] = handler.handle(message(text), NOW)
-        assert reply == Reply("Я понимаю кнопки и команды. Что показать?", bot.MAIN_MENU)
+        assert reply == Reply("Я понимаю кнопки и команды. Что показать?", RU_MENU)
 
 
 def test_help_lists_the_commands_with_a_menu_button(handler: Bot) -> None:
@@ -382,7 +383,7 @@ def test_archive_sends_the_page_after_the_list(store: StoryStore, handler: Bot) 
     page = actions[-1]
     assert page.filename == "f1-archive-2026-10-19.html"
     assert page.mime_type == "text/html"
-    assert page.caption == bot.ARCHIVE_CAPTION
+    assert page.caption == bot_texts.texts_for("ru").archive_caption
     html = page.content.decode("utf-8")
     assert '<article class="story followed" id="story-1">' in html
     assert "https://example.com/story-1" in html
@@ -627,7 +628,7 @@ def test_the_archive_page_goes_as_a_document(store: StoryStore, handler: Bot) ->
     [sent] = mock.sent("sendDocument")
     body = sent["multipart"]
     assert b'name="chat_id"\r\n\r\n424242\r\n' in body
-    assert bot.ARCHIVE_CAPTION.encode("utf-8") in body
+    assert bot_texts.texts_for("ru").archive_caption.encode("utf-8") in body
     assert b'name="document"; filename="f1-archive-2026-10-19.html"' in body
     assert b"Content-Type: text/html" in body
     assert b"<!doctype html>" in body
@@ -930,7 +931,9 @@ def test_the_listener_runs_with_the_configured_chat_and_favourites(
     monkeypatch.setenv(ts.TOKEN_VAR, TOKEN)
     monkeypatch.setenv(ts.CHAT_ID_VAR, CHAT)
     seen: dict[str, Any] = {}
-    monkeypatch.setattr(bot, "register_commands", lambda telegram: seen.setdefault("menu", True))
+    monkeypatch.setattr(
+        bot, "register_commands", lambda telegram, **kw: seen.setdefault("menu", True)
+    )
 
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         seen["offsets"] = offsets.load()
@@ -966,7 +969,7 @@ def test_a_fatal_poll_error_ends_the_command(
     def fake_listen(telegram: bot.BotApi, handler: Bot, offsets: bot.OffsetStore) -> None:
         raise bot.BotError("getUpdates: Conflict: terminated by other getUpdates request", 409)
 
-    monkeypatch.setattr(bot, "register_commands", lambda telegram: True)
+    monkeypatch.setattr(bot, "register_commands", lambda telegram, **kw: True)
 
     monkeypatch.setattr(bot, "listen", fake_listen)
     assert main(["bot"]) == 1
