@@ -20,6 +20,41 @@ It runs locally on macOS. See `CLAUDE.md` for the full spec and `BACKLOG.md` for
 
 Python 3.12, uv, SQLite, pytest (760+ tests, no network in tests), ruff, GitHub Actions.
 
+## Sample
+
+Part of a digest as it arrives in Telegram, rendered by `f1brief preview` from the built-in
+sample (synthetic data, Russian; the digest can also be written in English or Polish). Every
+fact ends with the source it came from.
+
+```text
+🏁 Гран-при США (образец)
+Этап 18 · Circuit of the Americas, Austin · 23–25.10.2026
+
+Расписание, время варшавское
+Пт 23.10 19:30  Практика 1
+Пт 23.10 23:30  Спринт-квалификация
+Сб 24.10 19:00  Спринт
+Сб 24.10 23:00  Квалификация
+Вс 25.10 21:00  Гонка
+
+🗓 Уикенд
+• Это спринт-уикенд: одна практика, очки дают и в субботу. · Jolpica-F1
+
+🧡 McLaren
+• Последние 5 гонок: P2, P1, P3, P2, P5 у лучшего пилота. · Jolpica-F1
+• Медианный темп на длинных отрезках — +0.12 с к лидеру. · OpenF1
+
+🤍 Haas
+• Очки в 3 из 5 последних гонок, лучший финиш — P7. · Jolpica-F1
+
+👤 Гонщики
+• Russell: P4, P3, P6 в трёх последних гонках. · Jolpica-F1
+• Ocon 6–3 Bearman в квалификациях, 5–4 в гонках. · Jolpica-F1
+
+🌦 Погода
+• Пятница сухо, 27 °C; в воскресенье вероятность дождя 40%. · Open-Meteo
+```
+
 ## Quick start (macOS)
 
 ```bash
